@@ -1,5 +1,10 @@
 import { MAP_SIZE_TILES, SIM_TICK_MS } from "@sef/shared-types";
 
+export * from "./economy/formulas.js";
+export * from "./commands/applyCommand.js";
+export * from "./pathfinding/Pathfinder.js";
+export * from "./combat/BattleEngine.js";
+
 /**
  * Deterministic fixed-timestep accumulator (30 Hz logical simulation decoupled from 60-144+ Hz rendering).
  */

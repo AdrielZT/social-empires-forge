@@ -12,19 +12,24 @@
     "dev": "pnpm --parallel --filter @sef/server --filter @sef/web dev",
     "dev:server": "pnpm --filter @sef/server dev",
     "dev:web": "pnpm --filter @sef/web dev",
+    "start": "tsx apps/server/src/index.ts",
     "build": "pnpm -r --workspace-concurrency=4 build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "test:e2e": "tsx tests/e2e/verify-game.mjs",
     "assets:sync": "pnpm --filter @sef/asset-pipeline sync",
     "assets:data": "pnpm --filter @sef/asset-pipeline compile-data",
     "assets:audio": "pnpm --filter @sef/asset-pipeline extract-audio",
     "assets:sprites": "pnpm --filter @sef/asset-pipeline extract-sprites",
     "assets:decompile": "pnpm --filter @sef/asset-pipeline decompile-as3",
+    "assets:behaviors": "pnpm --filter @sef/asset-pipeline extract-behaviors",
     "assets:verify": "pnpm --filter @sef/asset-pipeline verify",
-    "assets:pipeline": "pnpm assets:sync && pnpm assets:data && pnpm assets:audio && pnpm assets:sprites && pnpm assets:verify"
+    "assets:backup-drive": "pnpm --filter @sef/asset-pipeline exec tsx src/backup-to-drive.ts",
+    "assets:pipeline": "pnpm assets:sync && pnpm assets:data && pnpm assets:audio && pnpm assets:sprites && pnpm assets:decompile && pnpm assets:behaviors && pnpm assets:verify"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "playwright-core": "^1.65.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

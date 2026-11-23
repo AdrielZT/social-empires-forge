@@ -12,12 +12,16 @@ build/
 assets/generated/
 
 # Local databases & runtime saves
-data/
-saves/
+/data/
+/saves/
 *.db
 *.db-wal
 *.db-shm
 *.bak
+
+# Python cache
+__pycache__/
+*.pyc
 
 # Logs & tests
 logs/

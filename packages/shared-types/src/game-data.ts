@@ -117,46 +117,77 @@ export const RawMapItemTupleSchema = z.tuple([
 ]);
 export type RawMapItemTuple = z.infer<typeof RawMapItemTupleSchema>;
 
-export const MapStateSchema = z.object({
-  id: z.number().int(),
-  expansions: z.array(z.number().int()),
-  timestamp: z.number(),
-  coins: z.number(),
-  xp: z.number(),
-  level: z.number().int(),
-  stone: z.number(),
-  wood: z.number(),
-  food: z.number(),
-  race: z.string(),
-  skin: z.number().int(),
-  idCurrentTreasure: z.number().int().default(0),
-  timestampLastTreasure: z.number().default(0),
-  resourcesTraded: z.record(z.string(), z.number()).default({}),
-  receivedAssists: z.record(z.string(), z.unknown()).default({}),
-  increasedPopulation: z.number().int().default(0),
-  questTimes: z.record(z.string(), z.number()).default({}),
-  lastQuestTimes: z.record(z.string(), z.number()).default({}),
-  items: z.array(RawMapItemTupleSchema),
-  warehousedUnits: z.array(z.number().int()).default([]),
-  store: z.record(z.string(), z.number()).default({})
-});
+const phpRecordNum = z
+  .union([z.record(z.string(), z.coerce.number()), z.array(z.unknown()).transform(() => ({} as Record<string, number>))])
+  .default({});
+
+const phpRecordAny = z
+  .union([z.record(z.string(), z.unknown()), z.array(z.unknown()).transform(() => ({} as Record<string, unknown>))])
+  .default({});
+
+const warehousedUnitsField = z
+  .union([
+    z.array(z.number().int()),
+    z.record(z.string(), z.unknown()).transform((rec) => {
+      const out: number[] = [];
+      for (const [k, v] of Object.entries(rec)) {
+        const id = Number(k);
+        const cnt = Number(v);
+        if (Number.isInteger(id) && Number.isFinite(cnt) && cnt > 0) {
+          for (let i = 0; i < Math.min(cnt, 200); i++) out.push(id);
+        }
+      }
+      return out;
+    })
+  ])
+  .default([]);
+
+export const MapStateSchema = z
+  .object({
+    id: z.number().int().default(0),
+    expansions: z.array(z.number().int()).default([13]),
+    timestamp: z.number().default(0),
+    coins: z.number().default(0),
+    xp: z.number().default(0),
+    level: z.number().int().default(1),
+    stone: z.number().default(0),
+    wood: z.number().default(0),
+    food: z.number().default(0),
+    race: z.string().default("h"),
+    skin: z.number().int().default(0),
+    idCurrentTreasure: z.number().int().default(0),
+    timestampLastTreasure: z.number().default(0),
+    resourcesTraded: phpRecordNum,
+    receivedAssists: phpRecordAny,
+    increasedPopulation: z.number().int().default(0),
+    questTimes: phpRecordNum,
+    lastQuestTimes: phpRecordNum,
+    items: z.array(RawMapItemTupleSchema).default([]),
+    warehousedUnits: warehousedUnitsField,
+    store: phpRecordNum
+  })
+  .passthrough();
 export type MapState = z.infer<typeof MapStateSchema>;
 
-export const SaveFileSchema = z.object({
-  playerInfo: z.object({
-    pid: z.union([z.string(), z.number()]).transform(String),
-    name: z.string(),
-    pic: z.string().default(""),
-    cash: z.number().default(0),
-    completed_tutorial: z.union([z.number(), z.boolean()]).default(0),
-    default_map: z.number().int().default(0),
-    map_names: z.array(z.string()).default(["My Empire"]),
-    world_id: z.number().int().default(0),
-    last_logged_in: z.number().default(0),
-    attacks_won: z.number().int().default(0),
-    attacks_lost: z.number().int().default(0)
-  }).passthrough(),
-  maps: z.array(MapStateSchema),
-  privateState: z.record(z.string(), z.unknown()).default({})
-});
+export const SaveFileSchema = z
+  .object({
+    playerInfo: z
+      .object({
+        pid: z.union([z.string(), z.number()]).transform(String),
+        name: z.string().default("Emperador"),
+        pic: z.string().nullable().default("").transform((v) => v ?? ""),
+        cash: z.number().default(0),
+        completed_tutorial: z.union([z.number(), z.boolean()]).default(0),
+        default_map: z.number().int().default(0),
+        map_names: z.array(z.string()).default(["My Empire"]),
+        world_id: z.number().int().nullable().default(0),
+        last_logged_in: z.number().default(0),
+        attacks_won: z.number().int().default(0),
+        attacks_lost: z.number().int().default(0)
+      })
+      .passthrough(),
+    maps: z.array(MapStateSchema),
+    privateState: phpRecordAny
+  })
+  .passthrough();
 export type SaveFile = z.infer<typeof SaveFileSchema>;

@@ -1,26 +1,54 @@
 # Social Empires Forge
 
-Migración moderna, modular y nativa a tecnologías web (60+ FPS, WebGL2/WebGPU) del juego clásico **Social Empires (versión 1.4.07)**, manteniendo intacta su esencia, arte, balance y mecánicas originales.
+Migración nativa, moderna y desacoplada a tecnologías web (**60+ FPS**, WebGL2/WebGPU, TypeScript estricto) del juego clásico **Social Empires (versión 1.4.07)**, preservando intacta su esencia, arte original, animaciones, audio, balance y sistemas de juego.
 
-## Arquitectura del Monorepo
+## Características Implementadas
 
-- `packages/shared-types` — Contratos TypeScript + esquemas Zod (configuración, partidas, comandos, eventos, coordenadas isométricas, i18n `es`/`en`).
-- `packages/game-data` — Datos compilados y validados de Social Empires 1.4.07 (`items`, `globals`, `magics`, `goals`, `missions`, `collections`, `maps`, `quests`, localización bilingüe).
-- `packages/engine-sim` — Motor de simulación puro y determinista (30 Hz fijos, cero dependencias DOM): grid `100×100`, expansiones `20×20`, economía, pathfinding A\*, combate RTS, 15 hechizos, IA, habilidades data-driven y modos de juego.
-- `packages/engine-render` — Renderizador isométrico 60–144+ FPS con **PixiJS v8** (WebGPU/WebGL2), interpolación suave, frustum culling, depth sorting multi-tile y streaming LRU de Texture Atlases WebP.
-- `packages/engine-audio` — Motor Web Audio API con pooling para los 35 SFX originales y crossfade para las 7 pistas musicales.
-- `apps/web` — Cliente web responsive (**Vite + React 19 + Tailwind CSS v4 + Zustand**) con HUD y popups clásicos bilingües (`ES`/`EN`).
-- `apps/server` — Backend local autoritativo (**Node.js 22 + Fastify + SQLite WAL**) con soporte de los 128 comandos clásicos, backups atómicos e importación/exportación `.save.json`.
-- `tools/asset-pipeline` — Pipeline reproducible que sincroniza `AcidCaos/socialemperors@nerroth-rewrite` y compila localmente los sprites SWF a WebP Atlases + pivotes JSON + audio + referencia AS3.
+- **Renderizador Isométrico 60–144+ FPS (`@sef/engine-render`):** PixiJS v8 (WebGL2/WebGPU) con proyección fiel `108×54 px` verificada contra el AS3 original (`Config.as` / `IsoElement.as`), interpolación suave sobre simulación fija a 30 Hz, *frustum culling*, *depth sorting* multi-tile exacto, caché LRU de VRAM, los **8 biomas de terreno** y capa VFX (proyectiles parabólicos, rayos láser/dragón, explosiones de hechizos y textos flotantes).
+- **Motor de Simulación Determinista (`@sef/engine-sim`):** Desacoplado del DOM (`FixedStepClock` a 30 Hz), grid `100×100` con 25 expansiones `20×20`, economía clásica, mercado dinámico, colas de entrenamiento, descuentos de Herrería/Universidad, pathfinding **A\*** con soporte de unidades voladoras, combate RTS, **los 15 Hechizos Mágicos**, y comportamiento data-driven de las **771 unidades** (extraído de las 1,924 clases AS3 descompiladas: 263 `IsoSpecialUnit`/`IsoLimitUnit`, 302 `Delegates`, 224 con Barra Limit).
+- **Backend Local Autoritativo (`@sef/server`):** Node.js 22 + Fastify v5 + **SQLite en modo WAL** (`node:sqlite`), backups rotativos automáticos (máx. 30 cada 10 min), deduplicación idempotente de paquetes reintentados (PR #48), fixes de dimensiones 3×3 para *Soul Mixer* y *University* (PR #40), e **importación/exportación 100% compatible con `.save.json`** de `AcidCaos/socialemperors`.
+- **Audio Clásico (`@sef/engine-audio`):** Web Audio API con *voice pooling* para los **35 SFX** extraídos de `120608_dynamic.swf` y *crossfade* para las **7 pistas musicales MP3**.
+- **Interfaz Clásica Bilingüe (`ES` / `EN`) (`@sef/web`):** React 19 + Tailwind CSS v4 + Zustand con barra de recursos, Tienda de **1,786 ítems**, barra de 15 Magias, Mapa Mundial (**36 Campañas/Quests + Arthur 30–32**, **5 Arenas de Supervivencia**, **PvP Asíncrono + Ranking**, matriz 5×5 de expansiones), Hub de Sistemas (**206 Objetivos**, Mercado, Inventario, Cementerio/Héroes, Bono Diario, Dardos, 62 Colecciones) y Minimapa interactivo.
 
-## Arranque Rápido
+## Requisitos y Arranque Local
+
+- Node.js `>= 22`, `pnpm >= 9`, Python 3 (`Pillow`), Java 21 (para JPEXS FFDec).
 
 ```bash
+# 1. Instalar dependencias del monorepo
 pnpm install
+
+# 2. Ejecutar el pipeline reproducible de datos, audio, sprites WebP y comportamientos AS3
+#    (Alternativa rápida: descomprimir el respaldo `social-empires-forge-assets-1.4.07.tar.gz`
+#     en `assets/generated/` si dispones de él en tu carpeta personal de Google Drive)
 pnpm assets:pipeline
+
+# 3. Opción A — Modo desarrollo (Hot Reload en http://127.0.0.1:5173)
 pnpm dev
+
+# 3. Opción B — Producción en un solo servidor (http://127.0.0.1:5050)
+pnpm build
+pnpm start
+```
+
+## Controles en Juego
+
+- **Arrastrar clic izquierdo / `WASD` / Flechas:** Mover cámara.
+- **Rueda del ratón / `+` `−`:** Zoom suave anclado al cursor.
+- **Clic izquierdo:** Seleccionar edificio/unidad o colocar construcción/hechizo.
+- **`Shift` + Arrastrar clic izquierdo:** Selección RTS por caja de escuadrón.
+- **Clic derecho (con tropas/aldeanos seleccionados):** Mover al suelo, atacar enemigo o recolectar árboles/rocas/granjas. Cancelar colocación/hechizo.
+
+## Comandos de Verificación y Respaldo
+
+```bash
+pnpm typecheck            # Validación TypeScript estricta en los 8 workspaces
+pnpm test                 # Suite Vitest (geometría, simulación, 15 magias, SQLite y comandos)
+pnpm assets:verify        # Verificación SHA-256 y cobertura 100% de assets
+pnpm test:e2e             # Pruebas E2E reales en Chrome + capturas + telemetría FPS
+pnpm assets:backup-drive  # Respaldo opcional del bundle compilado en Google Drive
 ```
 
 ## Atribución y Preservación
 
-Este proyecto utiliza los datos de configuración, mapas y assets preservados por la comunidad en [`AcidCaos/socialemperors`](https://github.com/AcidCaos/socialemperors) (rama `nerroth-rewrite`, licencia GNU GPLv3), con correcciones técnicas documentadas en los PRs comunitarios (#40 y #48). Social Empires es una creación original de Socialpoint (2011, discontinuado); este repositorio no redistribuye archivos `.swf` propietarios y está destinado exclusivamente a la preservación y ejecución local.
+Basado en el proyecto de preservación comunitaria [`AcidCaos/socialemperors`](https://github.com/AcidCaos/socialemperors) (rama `nerroth-rewrite`, licencia GNU GPLv3), integrando los fixes técnicos de los PR #40 y #48. Social Empires es propiedad intelectual original de Socialpoint (2011, discontinuado). Este repositorio no redistribuye archivos `.swf` propietarios y está destinado exclusivamente a la preservación y ejecución local.
