@@ -325,7 +325,16 @@ export async function createServer(options: ServerOptions = {}): Promise<Fastify
   return app;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function isMainEntrypoint(): boolean {
+  if (!process.argv[1]) return false;
+  const argPath = path.resolve(process.argv[1]);
+  const selfPath = path.resolve(fileURLToPath(import.meta.url));
+  return process.platform === "win32"
+    ? argPath.toLowerCase() === selfPath.toLowerCase()
+    : argPath === selfPath;
+}
+
+if (isMainEntrypoint()) {
   const port = Number(process.env.PORT ?? 5050);
   const host = process.env.HOST ?? "127.0.0.1";
   createServer()

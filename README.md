@@ -12,15 +12,20 @@ Migración nativa, moderna y desacoplada a tecnologías web (**60+ FPS**, WebGL2
 
 ## Requisitos y Arranque Local
 
-- Node.js `>= 22`, `pnpm >= 9`, Python 3 (`Pillow`), Java 21 (para JPEXS FFDec).
+### Windows (Lanzador de doble clic — Recomendado)
+1. Descarga o clona este repositorio (`git clone https://github.com/AdrielZT/social-empires-forge.git` o **Code -> Download ZIP**).
+2. Haz doble clic en **`Jugar Social Empires.bat`**.
+   - Verifica e instala **Node.js 22 LTS** / `pnpm` si hace falta, detecta automáticamente el paquete `social-empires-forge-assets-1.4.07.tar.gz` en tu carpeta `Descargas` (o abre tu Google Drive para descargarlo), compila la web una sola vez, arranca el servidor local y abre el juego en tu navegador automáticamente.
+
+### Arranque manual (Windows / macOS / Linux)
+- Node.js `>= 22`, `pnpm >= 9`, Python 3 (`Pillow`) y Java 21 (solo si regeneras assets localmente).
 
 ```bash
 # 1. Instalar dependencias del monorepo
 pnpm install
 
 # 2. Ejecutar el pipeline reproducible de datos, audio, sprites WebP y comportamientos AS3
-#    (Alternativa rápida: descomprimir el respaldo `social-empires-forge-assets-1.4.07.tar.gz`
-#     en `assets/generated/` si dispones de él en tu carpeta personal de Google Drive)
+#    (Alternativa rápida: descomprimir `social-empires-forge-assets-1.4.07.tar.gz` en `assets/generated/`)
 pnpm assets:pipeline
 
 # 3. Opción A — Modo desarrollo (Hot Reload en http://127.0.0.1:5173)

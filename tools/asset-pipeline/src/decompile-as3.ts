@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
+import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { CACHE_DIR, DECOMPILED_AS3_DIR, GENERATED_ASSETS_DIR, UPSTREAM_DIR } from "./paths.js";
 
@@ -198,7 +199,9 @@ async function main(): Promise<void> {
         }
       }
       // Pack rasterized vector PNGs into WebP atlases
-      execFileSync("python3", [path.join(path.dirname(new URL(import.meta.url).pathname), "pack_vector_frames.py")], {
+      const pyBin = process.platform === "win32" ? "python" : "python3";
+      const packScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "pack_vector_frames.py");
+      execFileSync(pyBin, [packScript], {
         stdio: "inherit"
       });
     }
