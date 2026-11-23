@@ -11,9 +11,25 @@ import {
   type SimEntity,
   type SimVisualEvent
 } from "@sef/engine-sim";
-import { IsoRenderer, type RenderEntityData, type RenderProjectileData } from "@sef/engine-render";
+import {
+  IsoRenderer,
+  type ClickModifiers,
+  type RenderEntityData,
+  type RenderProjectileData
+} from "@sef/engine-render";
 import { AudioManager, SFX_NAMES } from "@sef/engine-audio";
 import { useGameStore, type PlayMode, type SelectedEntitySummary } from "../store/gameStore.js";
+
+const RESOURCE_SUBCATS = new Set([2, 3, 4, 122, 125, 126, 127]);
+const WILD_NEUTRAL_SUBCATS = new Set([74, 75, 125, 126, 127, 811]);
+
+function isHarvestableResourceSubcat(subcat: number): boolean {
+  return RESOURCE_SUBCATS.has(subcat);
+}
+
+function isVillagerEntity(ent: SimEntity): boolean {
+  return ent.type === "u" && (ent.itemId === 500 || ent.itemId === 501 || ent.subcatFunctional === 71);
+}
 
 const SURVIVAL_BIOMES: { id: number; nameEs: string; nameEn: string; biome: TerrainSkin }[] = [
   { id: 1, nameEs: "Arena Clásica", nameEn: "Classic Arena", biome: "terreno" },
@@ -59,6 +75,7 @@ export class GameController {
   private survivalWaveTimer = 0;
   private lastHudSyncAt = 0;
   private saveTupleToUid = new Map<number, number>(); // entity uid -> index in save.maps[0].items
+  private collectedCooldownUntil = new Map<number, number>(); // building uid -> timestamp ms
 
   constructor(hostEl: HTMLElement) {
     this.audio = new AudioManager("/assets/audio");
@@ -66,7 +83,8 @@ export class GameController {
       onEntitySelect: (ent, additive) => this.handleEntitySelect(ent, additive),
       onBoxSelect: (uids) => this.handleBoxSelect(uids),
       onTileHover: (tx, ty) => this.handleTileHover(tx, ty),
-      onTileClick: (tx, ty, button, hit) => void this.handleTileClick(tx, ty, button, hit),
+      onTileClick: (tx, ty, button, hit, mods) => void this.handleTileClick(tx, ty, button, hit, mods),
+      onEscape: () => this.handleEscape(),
       onTickFrame: (dtMs) => this.onAnimationFrame(dtMs)
     });
   }
@@ -91,15 +109,22 @@ export class GameController {
     this.grid = new OccupancyGrid();
     this.battle = new BattleEngine(this.grid, store.itemsById, store.behaviorsById);
     this.saveTupleToUid.clear();
+    this.collectedCooldownUntil.clear();
 
     const map0 = save.maps[0];
+    const ownedExps = new Set(useGameStore.getState().expansions);
     const preloadNames = new Set<string>();
     if (map0) {
       map0.items.forEach((tuple, idx) => {
         const [itemId, tx, ty, orientation] = tuple;
         const def = store.itemsById.get(itemId);
         if (!def || !def.imgName) return;
-        const team = def.race === "t" || def.race === "e" ? "enemy" : "player";
+
+        // Classify neutral resources/animals vs enemy trolls vs player empire entities
+        const isEnemy = def.race === "t" || def.race === "e";
+        const isNeutral = !isEnemy && (def.race === "n" || WILD_NEUTRAL_SUBCATS.has(def.subcatFunctional));
+        const team = isEnemy ? "enemy" : isNeutral ? "neutral" : "player";
+
         const ent = this.battle!.spawnFromItem(
           itemId,
           tx,
@@ -108,6 +133,18 @@ export class GameController {
           def.type === "u" ? (orientation >= 1 && orientation <= 8 ? orientation : 4) : orientation
         );
         if (ent) {
+          // Authentic village stances:
+          // - Wild trolls outside owned land guard their camp defensively (never attack trees!)
+          // - Villagers wait calmly for player harvest/move orders
+          // - Player soldiers defend nearby threats and obey all click orders
+          if (team === "enemy" && !ownedExps.has(tileToExpansionId(tx, ty))) {
+            ent.stance = "defensive";
+          } else if (team === "player" && isVillagerEntity(ent)) {
+            ent.stance = "stand";
+          } else if (team === "player" && ent.type === "u") {
+            ent.stance = "defensive";
+          }
+
           this.saveTupleToUid.set(ent.uid, idx);
           if (tx >= 36 && tx <= 64 && ty >= 36 && ty <= 64) {
             preloadNames.add(def.imgName);
@@ -121,6 +158,54 @@ export class GameController {
     this.renderer.camera.centerOnTile(50, 50);
     this.syncRendererSnapshot(1);
     void this.renderer.preloadSprites(preloadNames);
+  }
+
+  selectAllPlayerArmy(): void {
+    if (!this.battle) return;
+    const store = useGameStore.getState();
+    const uids: number[] = [];
+    for (const e of this.battle.entities.values()) {
+      if (e.alive && e.team === "player" && e.type === "u" && !isVillagerEntity(e)) {
+        uids.push(e.uid);
+      }
+    }
+    if (uids.length === 0) {
+      // Fallback: select all player units including villagers
+      for (const e of this.battle.entities.values()) {
+        if (e.alive && e.team === "player" && e.type === "u") uids.push(e.uid);
+      }
+    }
+    if (uids.length === 0) {
+      this.notify(store.locale === "es" ? "No tienes unidades disponibles" : "No units available");
+      return;
+    }
+    this.renderer.setSelectedEntities(uids);
+    this.handleBoxSelect(uids);
+    const first = this.battle.entities.get(uids[0]!);
+    if (first) this.renderer.camera.centerOnTile(first.tx, first.ty);
+    this.notify(
+      store.locale === "es"
+        ? `Ejército seleccionado (${uids.length}). Haz clic en un enemigo para atacar o en el suelo para mover.`
+        : `Army selected (${uids.length}). Click an enemy to attack or ground to move.`
+    );
+  }
+
+  private handleEscape(): void {
+    const store = useGameStore.getState();
+    if (store.placingItemId !== null || store.castingMagicId !== null || store.movingEntityUid !== null) {
+      store.setPlacingItemId(null);
+      store.setCastingMagicId(null);
+      store.setMovingEntityUid(null);
+      this.renderer.setPlacementPreview(null);
+      this.renderer.setSpellPreview(null);
+      return;
+    }
+    if (store.activeModal !== null) {
+      store.setActiveModal(null);
+      return;
+    }
+    store.setSelection([], null);
+    this.renderer.setSelectedEntities([]);
   }
 
   /**
@@ -450,8 +535,17 @@ export class GameController {
     if (!sel) return;
     const ok = await this.sendCommands([{ cmd: "collect_new", args: [sel.tx, sel.ty, sel.itemId, 2] }]);
     if (ok) {
-      const icon = sel.collectType === "w" ? "🪵" : sel.collectType === "s" ? "🪨" : sel.collectType === "f" ? "🍖" : "🪙";
-      this.renderer.spawnFloatingText(sel.tx, sel.ty, `+${sel.collectAmount} ${icon}`, 0xfacc15);
+      this.collectedCooldownUntil.set(sel.uid, performance.now() + 30000);
+      const resLabel =
+        sel.collectType === "w"
+          ? "Madera"
+          : sel.collectType === "s"
+            ? "Piedra"
+            : sel.collectType === "f"
+              ? "Comida"
+              : "Oro";
+      this.renderer.spawnFloatingText(sel.tx, sel.ty, `+${sel.collectAmount} ${resLabel}`, 0xfacc15);
+      this.syncRendererSnapshot(1);
     }
   }
 
@@ -587,22 +681,79 @@ export class GameController {
     }
   }
 
+  private issueUnitOrder(
+    playerUnits: number[],
+    tx: number,
+    ty: number,
+    hitEntity: RenderEntityData | null
+  ): boolean {
+    if (!this.battle || playerUnits.length === 0) return false;
+    const store = useGameStore.getState();
+
+    // 1. Attack enemy unit or enemy building
+    if (hitEntity && hitEntity.team === "enemy") {
+      this.battle.orderAttack(playerUnits, hitEntity.uid);
+      this.renderer.spawnCommandPulse(hitEntity.tx, hitEntity.ty, 0xef4444);
+      this.renderer.spawnFloatingText(
+        hitEntity.tx,
+        hitEntity.ty,
+        store.locale === "es" ? "Atacar!" : "Attack!",
+        0xf87171
+      );
+      void this.audio.playSfx(SFX_NAMES.sword1, 0.7);
+      return true;
+    }
+
+    // 2. Harvest Tree (125), Stone (126), Gold (127), or Farm (122)
+    if (hitEntity && hitEntity.type === "b") {
+      const def = store.itemsById.get(hitEntity.itemId);
+      if (def && isHarvestableResourceSubcat(def.subcatFunctional)) {
+        const workers = playerUnits.filter((id) => {
+          const e = this.battle?.entities.get(id);
+          return e ? isVillagerEntity(e) : false;
+        });
+        const harvesters = workers.length > 0 ? workers : playerUnits;
+        for (const wUid of harvesters) {
+          this.battle.orderHarvest(wUid, hitEntity.uid);
+        }
+        this.renderer.spawnCommandPulse(hitEntity.tx, hitEntity.ty, 0xfacc15);
+        this.renderer.spawnFloatingText(
+          hitEntity.tx,
+          hitEntity.ty,
+          store.locale === "es" ? "Recolectar" : "Harvest",
+          0xfacc15
+        );
+        void this.audio.playSfx(
+          def.collectType === "w" ? SFX_NAMES.lumber : def.collectType === "f" ? SFX_NAMES.farm : SFX_NAMES.rock,
+          0.65
+        );
+        return true;
+      }
+    }
+
+    // 3. Move to target tile
+    if (tx >= 0 && ty >= 0 && tx < 100 && ty < 100) {
+      this.battle.orderMove(playerUnits, tx, ty);
+      this.renderer.spawnCommandPulse(tx, ty, 0x4ade80);
+      void this.audio.playSfx(SFX_NAMES.buttonClick, 0.5);
+      return true;
+    }
+    return false;
+  }
+
   private async handleTileClick(
     tx: number,
     ty: number,
     button: number,
-    hitEntity: RenderEntityData | null
+    hitEntity: RenderEntityData | null,
+    mods: ClickModifiers = { ctrlKey: false, shiftKey: false, doubleClick: false }
   ): Promise<void> {
     const store = useGameStore.getState();
 
-    // Right-click cancels placement/spell or issues RTS Move/Attack/Harvest order!
+    // Right-click: cancel active tool OR issue RTS Move/Attack/Harvest order
     if (button === 2) {
       if (store.placingItemId !== null || store.castingMagicId !== null || store.movingEntityUid !== null) {
-        store.setPlacingItemId(null);
-        store.setCastingMagicId(null);
-        store.setMovingEntityUid(null);
-        this.renderer.setPlacementPreview(null);
-        this.renderer.setSpellPreview(null);
+        this.handleEscape();
         return;
       }
       if (this.battle && store.selectedUids.length > 0) {
@@ -611,40 +762,22 @@ export class GameController {
           return e && e.alive && e.type === "u" && e.team === "player";
         });
         if (playerUnits.length > 0) {
-          if (hitEntity && hitEntity.team === "enemy") {
-            this.battle.orderAttack(playerUnits, hitEntity.uid);
-            this.renderer.spawnFloatingText(hitEntity.tx, hitEntity.ty, "⚔️", 0xf87171);
-            void this.audio.playSfx(SFX_NAMES.sword1, 0.65);
-          } else if (hitEntity && hitEntity.type === "b") {
-            const def = store.itemsById.get(hitEntity.itemId);
-            const isResource = def && (def.subcatFunctional === 2 || def.subcatFunctional === 3 || def.subcatFunctional === 4 || def.subcatFunctional === 122);
-            if (isResource) {
-              for (const wUid of playerUnits) {
-                this.battle.orderHarvest(wUid, hitEntity.uid);
-              }
-              this.renderer.spawnFloatingText(hitEntity.tx, hitEntity.ty, "⛏️", 0xfacc15);
-              void this.audio.playSfx(SFX_NAMES.lumber, 0.6);
-              return;
-            }
-          }
-          if (!hitEntity || hitEntity.team !== "enemy") {
-            this.battle.orderMove(playerUnits, tx, ty);
-            this.renderer.spawnFloatingText(tx, ty, "▸", 0x4ade80);
-            void this.audio.playSfx(SFX_NAMES.buttonClick, 0.5);
-          }
+          this.issueUnitOrder(playerUnits, tx, ty, hitEntity);
         }
       }
       return;
     }
 
+    if (button !== 0) return;
+
     // Left-click when casting spell
-    if (button === 0 && store.castingMagicId !== null) {
+    if (store.castingMagicId !== null) {
       await this.castMagicAt(store.castingMagicId, tx, ty);
       return;
     }
 
     // Left-click when placing building/unit from shop
-    if (button === 0 && store.placingItemId !== null) {
+    if (store.placingItemId !== null) {
       const def = store.itemsById.get(store.placingItemId);
       if (!def) return;
       const expId = tileToExpansionId(tx, ty);
@@ -657,7 +790,7 @@ export class GameController {
     }
 
     // Left-click when moving an existing building
-    if (button === 0 && store.movingEntityUid !== null && this.battle) {
+    if (store.movingEntityUid !== null && this.battle) {
       const ent = this.battle.entities.get(store.movingEntityUid);
       if (ent) {
         const expId = tileToExpansionId(tx, ty);
@@ -678,6 +811,63 @@ export class GameController {
           }
         }
       }
+      return;
+    }
+
+    // Classic Social Empires Left-Click Selection & Commanding:
+    const selectedPlayerUnits = this.battle
+      ? store.selectedUids.filter((id) => {
+          const e = this.battle?.entities.get(id);
+          return e && e.alive && e.type === "u" && e.team === "player";
+        })
+      : [];
+
+    // Double-click a friendly unit -> select all friendly units of the same type
+    if (mods.doubleClick && hitEntity && hitEntity.type === "u" && hitEntity.team === "player" && this.battle) {
+      const sameTypeUids: number[] = [];
+      for (const e of this.battle.entities.values()) {
+        if (e.alive && e.team === "player" && e.type === "u" && e.itemId === hitEntity.itemId) {
+          sameTypeUids.push(e.uid);
+        }
+      }
+      this.renderer.setSelectedEntities(sameTypeUids);
+      this.handleBoxSelect(sameTypeUids);
+      return;
+    }
+
+    // If friendly unit(s) are already selected, left-clicking an enemy, a harvestable resource,
+    // or empty ground issues the order directly (just like classic Social Empires!)
+    if (selectedPlayerUnits.length > 0) {
+      if (hitEntity && hitEntity.team === "enemy") {
+        this.issueUnitOrder(selectedPlayerUnits, tx, ty, hitEntity);
+        return;
+      }
+      if (hitEntity && hitEntity.type === "b") {
+        const def = store.itemsById.get(hitEntity.itemId);
+        if (def && isHarvestableResourceSubcat(def.subcatFunctional)) {
+          this.issueUnitOrder(selectedPlayerUnits, tx, ty, hitEntity);
+          return;
+        }
+      }
+      if (!hitEntity) {
+        this.issueUnitOrder(selectedPlayerUnits, tx, ty, null);
+        return;
+      }
+    }
+
+    // Otherwise, select the clicked entity (or deselect if clicking empty ground with a building selected)
+    if (hitEntity) {
+      this.handleEntitySelect(hitEntity, mods.ctrlKey || mods.shiftKey);
+      if (hitEntity.team === "enemy") {
+        this.notify(
+          store.locale === "es"
+            ? "Selecciona tus tropas (o pulsa 'Ejército') y haz clic en este enemigo para atacar."
+            : "Select your troops (or click 'Army') and click this enemy to attack."
+        );
+      }
+    } else {
+      this.renderer.setSelectedEntities([]);
+      this.handleEntitySelect(null, false);
     }
   }
 
@@ -722,8 +912,15 @@ export class GameController {
           void this.audio.playSfx(ev.name, 0.75);
           break;
         case "harvest": {
-          const icon = ev.resourceType === "w" ? "🪵" : ev.resourceType === "s" ? "🪨" : ev.resourceType === "f" ? "🍖" : "🪙";
-          this.renderer.spawnFloatingText(ev.tx, ev.ty, `+${ev.amount} ${icon}`, 0xfacc15);
+          const label =
+            ev.resourceType === "w"
+              ? store.locale === "es" ? "Madera" : "Wood"
+              : ev.resourceType === "s"
+                ? store.locale === "es" ? "Piedra" : "Stone"
+                : ev.resourceType === "f"
+                  ? store.locale === "es" ? "Comida" : "Food"
+                  : store.locale === "es" ? "Oro" : "Gold";
+          this.renderer.spawnFloatingText(ev.tx, ev.ty, `+${ev.amount} ${label}`, 0xfacc15);
           if (store.playMode === "village") {
             const resEnt = this.battle?.entities.get(ev.resourceUid);
             if (resEnt) {
@@ -734,7 +931,11 @@ export class GameController {
         }
         case "death":
           if (ev.team === "enemy") {
-            this.renderer.spawnFloatingText(ev.tx, ev.ty, `+${ev.xp} XP`, 0x38bdf8);
+            const xp = Math.max(10, ev.xp || 25);
+            this.renderer.spawnFloatingText(ev.tx, ev.ty, `+${xp} XP`, 0x38bdf8);
+            if (store.playMode === "village") {
+              void this.sendCommands([{ cmd: "gold_statue_conversion", args: [Math.max(25, xp * 2)] }]);
+            }
           }
           break;
       }
@@ -796,10 +997,18 @@ export class GameController {
     }
   }
 
+  private isBuildingCollectReady(e: SimEntity, nowMs: number): boolean {
+    if (e.type !== "b" || e.team !== "player" || e.collectAmount <= 0) return false;
+    if (WILD_NEUTRAL_SUBCATS.has(e.subcatFunctional)) return false;
+    const cd = this.collectedCooldownUntil.get(e.uid) ?? 0;
+    return nowMs >= cd;
+  }
+
   private syncRendererSnapshot(_alpha: number): void {
     if (!this.battle) return;
     const renderList: RenderEntityData[] = [];
     const selectedSet = new Set(useGameStore.getState().selectedUids);
+    const nowMs = performance.now();
 
     for (const e of this.battle.entities.values()) {
       if (!e.alive && e.dyingTicks <= 0) continue;
@@ -824,7 +1033,7 @@ export class GameController {
         selected: selectedSet.has(e.uid),
         team: e.team,
         limitRatio: e.behavior?.hasLimitBar && e.behavior.limitMax > 0 ? e.limitGauge / e.behavior.limitMax : 0,
-        collectReady: e.type === "b" && e.team === "player" && e.collectAmount > 0,
+        collectReady: this.isBuildingCollectReady(e, nowMs),
         frozen: e.status.frozenTicks > 0,
         poisoned: e.status.poisonTicks > 0,
         shielded: e.status.shieldHp > 0,
@@ -874,7 +1083,7 @@ export class GameController {
       animState: e.animState,
       limitGauge: e.limitGauge,
       limitMax: e.behavior?.limitMax ?? 0,
-      collectReady: e.type === "b" && e.collectAmount > 0,
+      collectReady: this.isBuildingCollectReady(e, performance.now()),
       collectAmount: e.collectAmount,
       collectType: e.collectType,
       queue,

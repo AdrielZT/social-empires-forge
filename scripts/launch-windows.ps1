@@ -170,10 +170,19 @@ if (-not (Test-Path $manifestPath)) {
 }
 Write-Host "[4/5] Assets verificados (1,588 sprites WebP + 35 SFX + 7 musicas)." -ForegroundColor Green
 
-# 5. Compilar frontend web de produccion si hace falta
+# 5. Compilar frontend web de produccion si hace falta o si el codigo se actualizo
 $webIndex = Join-Path $RepoRoot "apps\web\dist\index.html"
-if (-not (Test-Path $webIndex)) {
-    Write-Host "[5/5] Compilando interfaz web de produccion (solo la primera vez)..." -ForegroundColor Cyan
+$needsBuild = -not (Test-Path $webIndex)
+if (-not $needsBuild) {
+    $distTime = (Get-Item $webIndex).LastWriteTimeUtc
+    $newestSrc = Get-ChildItem -Path (Join-Path $RepoRoot "apps\web\src"), (Join-Path $RepoRoot "packages") -Recurse -File -Include *.ts,*.tsx,*.css -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    if ($newestSrc -and $newestSrc.LastWriteTimeUtc -gt $distTime) {
+        $needsBuild = $true
+    }
+}
+if ($needsBuild) {
+    Write-Host "[5/5] Compilando interfaz web actualizada..." -ForegroundColor Cyan
     & pnpm --filter @sef/web build
     if ($LASTEXITCODE -ne 0) { throw "Fallo la compilacion del frontend." }
 } else {

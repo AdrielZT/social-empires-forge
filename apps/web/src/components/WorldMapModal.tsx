@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { SaveFile } from "@sef/shared-types";
 import { SURVIVAL_BIOMES, type GameController } from "../engine/GameController.js";
 import { useGameStore } from "../store/gameStore.js";
+import { HudIcon, ResourceIcon } from "./GameIcons.js";
 
 export function WorldMapModal(props: { controller: GameController | null }) {
   const locale = useGameStore((s) => s.locale);
@@ -73,7 +74,7 @@ export function WorldMapModal(props: { controller: GameController | null }) {
         {/* Header */}
         <div className="flex items-center justify-between border-b border-amber-500/40 bg-[#2b190b] px-5 py-3">
           <div className="flex items-center gap-2.5">
-            <span className="text-2xl">🗺️</span>
+            <HudIcon name="map" className="h-6 w-6" />
             <h2 className="text-lg font-black text-amber-300">
               {locale === "es" ? "Mapa Mundial, Campañas y Modos" : "World Map, Campaigns & Modes"}
             </h2>
@@ -91,11 +92,11 @@ export function WorldMapModal(props: { controller: GameController | null }) {
         <div className="flex flex-wrap gap-1.5 border-b border-amber-500/30 bg-[#241509] px-4 py-2 text-xs font-extrabold">
           {(
             [
-              ["quests", locale === "es" ? `⛵ Campañas (${questMaps.length})` : `⛵ Quests (${questMaps.length})`],
-              ["survival", locale === "es" ? "☠️ Supervivencia (5)" : "☠️ Survival (5)"],
-              ["pvp", locale === "es" ? "⚔️ Asalto PvP" : "⚔️ PvP Assault"],
-              ["expansions", locale === "es" ? `🧭 Expansiones (${expansions.length}/25)` : `🧭 Expansions (${expansions.length}/25)`],
-              ["empires", locale === "es" ? "👑 Partidas (.save.json)" : "👑 Saves (.save.json)"]
+              ["quests", locale === "es" ? `Campañas (${questMaps.length})` : `Quests (${questMaps.length})`],
+              ["survival", locale === "es" ? "Supervivencia (5)" : "Survival (5)"],
+              ["pvp", locale === "es" ? "Asalto PvP" : "PvP Assault"],
+              ["expansions", locale === "es" ? `Expansiones (${expansions.length}/25)` : `Expansions (${expansions.length}/25)`],
+              ["empires", locale === "es" ? "Partidas (.save.json)" : "Saves (.save.json)"]
             ] as const
           ).map(([id, label]) => (
             <button
@@ -171,15 +172,16 @@ export function WorldMapModal(props: { controller: GameController | null }) {
                   onClick={() =>
                     void props.controller?.startBattleMap("friend/AcidCaos", "pvp", locale === "es" ? "Asalto PvP" : "PvP Assault")
                   }
-                  className="rounded-xl bg-red-600 hover:bg-red-500 px-5 py-2.5 text-sm font-black text-white shadow cursor-pointer"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 hover:bg-red-500 px-5 py-2.5 text-sm font-black text-white shadow cursor-pointer"
                 >
-                  ⚔️ {locale === "es" ? "Buscar Rival" : "Find Opponent"}
+                  <HudIcon name="sword" className="h-4 w-4" />
+                  <span>{locale === "es" ? "Buscar Rival" : "Find Opponent"}</span>
                 </button>
               </div>
 
               <div className="rounded-xl border border-amber-500/30 bg-stone-950/75 p-3">
                 <h4 className="mb-2 text-xs font-black uppercase tracking-wide text-amber-300">
-                  🏆 {locale === "es" ? "Ranking Local" : "Local Ranking"}
+                  {locale === "es" ? "Ranking Local" : "Local Ranking"}
                 </h4>
                 <div className="space-y-1 text-xs">
                   {ranking.map((r, i) => (
@@ -213,16 +215,16 @@ export function WorldMapModal(props: { controller: GameController | null }) {
                       type="button"
                       disabled={owned}
                       onClick={() => void props.controller?.expandTerritory(expId, false)}
-                      className={`h-14 w-16 rounded-xl border text-xs font-black cursor-pointer ${
+                      className={`flex flex-col items-center justify-center h-14 w-16 rounded-xl border text-xs font-black cursor-pointer ${
                         owned
                           ? "border-emerald-400 bg-emerald-700/50 text-emerald-100 cursor-default"
                           : "border-amber-500/50 bg-stone-900 hover:bg-amber-600/40 text-amber-200"
                       }`}
                     >
-                      #{expId}
-                      <div className="text-[10px] font-normal">
-                        {owned ? (locale === "es" ? "Tuyo" : "Owned") : "🪙"}
-                      </div>
+                      <span>#{expId}</span>
+                      <span className="mt-0.5 flex items-center justify-center text-[10px] font-normal">
+                        {owned ? (locale === "es" ? "Tuyo" : "Owned") : <ResourceIcon type="g" className="h-3.5 w-3.5" />}
+                      </span>
                     </button>
                   );
                 })}
@@ -248,7 +250,7 @@ export function WorldMapModal(props: { controller: GameController | null }) {
                   + {locale === "es" ? "Crear Imperio" : "Create Empire"}
                 </button>
                 <label className="rounded-lg bg-sky-700 hover:bg-sky-600 px-3.5 py-1.5 text-xs font-black text-white cursor-pointer">
-                  📥 {locale === "es" ? "Importar .save.json" : "Import .save.json"}
+                  {locale === "es" ? "Importar .save.json" : "Import .save.json"}
                   <input type="file" accept=".json" onChange={(e) => void handleImportSave(e)} className="hidden" />
                 </label>
                 {activeSave && (
@@ -256,7 +258,7 @@ export function WorldMapModal(props: { controller: GameController | null }) {
                     href={`/api/saves/${encodeURIComponent(activeSave.playerInfo.pid)}/export`}
                     className="rounded-lg bg-amber-600 hover:bg-amber-500 px-3.5 py-1.5 text-xs font-black text-stone-950"
                   >
-                    📤 {locale === "es" ? "Exportar .save.json" : "Export .save.json"}
+                    {locale === "es" ? "Exportar .save.json" : "Export .save.json"}
                   </a>
                 )}
               </div>
@@ -271,10 +273,12 @@ export function WorldMapModal(props: { controller: GameController | null }) {
                         isCurrent ? "border-amber-400 bg-amber-900/30" : "border-stone-700 bg-stone-900/80"
                       }`}
                     >
-                      <div>
-                        <span className="font-black text-amber-200">{emp.name}</span>{" "}
-                        <span className="text-amber-100/70">
-                          · Nv.{emp.level} · 🪙{Math.floor(emp.coins).toLocaleString()} · 💵{emp.cash}
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-amber-200">{emp.name}</span>
+                        <span className="flex items-center gap-1 text-amber-100/75">
+                          · Nv.{emp.level} · <ResourceIcon type="g" className="h-3.5 w-3.5" />
+                          {Math.floor(emp.coins).toLocaleString()} · <ResourceIcon type="c" className="h-3.5 w-3.5" />
+                          {emp.cash}
                         </span>
                       </div>
                       {!isCurrent ? (

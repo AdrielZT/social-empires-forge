@@ -74,11 +74,24 @@ export interface RendererMetrics {
   rendererType: string;
 }
 
+export interface ClickModifiers {
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  doubleClick: boolean;
+}
+
 export interface IsoRendererCallbacks {
   onEntitySelect?: (entity: RenderEntityData | null, additive: boolean) => void;
   onBoxSelect?: (uids: number[]) => void;
   onTileHover?: (tx: number, ty: number) => void;
-  onTileClick?: (tx: number, ty: number, button: number, hitEntity: RenderEntityData | null) => void;
+  onTileClick?: (
+    tx: number,
+    ty: number,
+    button: number,
+    hitEntity: RenderEntityData | null,
+    modifiers?: ClickModifiers
+  ) => void;
+  onEscape?: () => void;
   onTickFrame?: (dtMs: number) => void;
 }
 
@@ -160,6 +173,10 @@ export class IsoRenderer {
   private isDragging = false;
   private isBoxSelecting = false;
   private dragMoved = false;
+  private downClientX = 0;
+  private downClientY = 0;
+  private lastClickAt = 0;
+  private lastClickUid: number | null = null;
   private boxStartX = 0;
   private boxStartY = 0;
   private lastPointerX = 0;
@@ -304,6 +321,22 @@ export class IsoRenderer {
       maxLifeMs: 750
     });
     this.camera.triggerShake(8);
+  }
+
+  spawnCommandPulse(tx: number, ty: number, color = 0x4ade80): void {
+    if (this.destroyed) return;
+    const pos = tileToScreen(tx, ty);
+    const g = new Graphics();
+    this.vfxLayer.addChild(g);
+    this.spellEffects.push({
+      g,
+      wx: pos.x,
+      wy: pos.y,
+      maxRadiusPx: 34,
+      color,
+      lifeMs: 0,
+      maxLifeMs: 420
+    });
   }
 
   private buildTerrainSlots(): void {
@@ -754,7 +787,7 @@ export class IsoRenderer {
   private updateSpriteAnimation(vis: EntityVisual, dtSec: number): void {
     const atlas = vis.atlas;
     if (!atlas) return;
-    const { type, orientation, animState, scale, enlarged } = vis.data;
+    const { type, orientation, animState, scale, enlarged, hp, maxHp } = vis.data;
 
     let rootFrameNum = 1;
     let flipX: 1 | -1 = 1;
@@ -776,7 +809,18 @@ export class IsoRenderer {
     if (!anim || anim.frames.length === 0) return;
 
     let frameKey: string;
-    if (anim.frames.length === 1) {
+    if (type === "b") {
+      // In Social Empires Flash SWFs, building/tree/farm sub-timelines store damage,
+      // chop, or growth states (NOT looping animations). Hold frame 0 when intact so
+      // trees, mines, farms, and structures never flicker at 24 FPS!
+      if (anim.frames.length > 1 && hp < maxHp && maxHp > 0) {
+        const dmgRatio = Math.max(0, Math.min(0.99, 1 - hp / maxHp));
+        const idx = Math.min(anim.frames.length - 1, Math.floor(dmgRatio * anim.frames.length));
+        frameKey = anim.frames[idx]!;
+      } else {
+        frameKey = anim.frames[0]!;
+      }
+    } else if (anim.frames.length === 1) {
       frameKey = anim.frames[0]!;
     } else {
       vis.animElapsed += dtSec;
@@ -817,6 +861,11 @@ export class IsoRenderer {
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
 
+      // Always reset drag state for EVERY mouse button (including right-click!)
+      this.dragMoved = false;
+      this.downClientX = e.clientX;
+      this.downClientY = e.clientY;
+
       if (e.button === 0 && e.shiftKey) {
         this.isBoxSelecting = true;
         this.boxStartX = sx;
@@ -827,7 +876,6 @@ export class IsoRenderer {
 
       if (e.button === 0 || e.button === 1) {
         this.isDragging = true;
-        this.dragMoved = false;
         this.lastPointerX = e.clientX;
         this.lastPointerY = e.clientY;
         canvas.setPointerCapture(e.pointerId);
@@ -853,12 +901,15 @@ export class IsoRenderer {
       }
 
       if (this.isDragging) {
-        const dx = e.clientX - this.lastPointerX;
-        const dy = e.clientY - this.lastPointerY;
-        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        const totalDist = Math.hypot(e.clientX - this.downClientX, e.clientY - this.downClientY);
+        if (totalDist > 8) {
           this.dragMoved = true;
         }
-        this.camera.panByScreenDelta(dx, dy);
+        if (this.dragMoved) {
+          const dx = e.clientX - this.lastPointerX;
+          const dy = e.clientY - this.lastPointerY;
+          this.camera.panByScreenDelta(dx, dy);
+        }
         this.lastPointerX = e.clientX;
         this.lastPointerY = e.clientY;
         return;
@@ -907,16 +958,29 @@ export class IsoRenderer {
           canvas.releasePointerCapture(e.pointerId);
         }
       }
-      if (!this.dragMoved) {
+
+      const isClick = e.button === 2 || !this.dragMoved;
+      if (isClick) {
         const world = this.camera.screenToWorld(sx, sy);
         const hit = this.pickEntityAtWorld(world.x, world.y);
         const t = screenToTile(world.x, world.y);
 
-        if (e.button === 0 && !this.placementPreview && !this.spellPreview) {
-          this.setSelectedEntities(hit ? [hit.uid] : []);
-          this.callbacks.onEntitySelect?.(hit, e.ctrlKey || e.metaKey);
+        const nowMs = performance.now();
+        const doubleClick =
+          e.button === 0 &&
+          hit !== null &&
+          this.lastClickUid === hit.uid &&
+          nowMs - this.lastClickAt < 380;
+        if (e.button === 0) {
+          this.lastClickAt = nowMs;
+          this.lastClickUid = hit ? hit.uid : null;
         }
-        this.callbacks.onTileClick?.(Math.floor(t.tx), Math.floor(t.ty), e.button, hit);
+
+        this.callbacks.onTileClick?.(Math.floor(t.tx), Math.floor(t.ty), e.button, hit, {
+          ctrlKey: e.ctrlKey || e.metaKey,
+          shiftKey: e.shiftKey,
+          doubleClick
+        });
       }
     };
 
@@ -932,6 +996,10 @@ export class IsoRenderer {
     const onContextMenu = (e: MouseEvent) => e.preventDefault();
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.code === "Escape") {
+        this.callbacks.onEscape?.();
+        return;
+      }
       this.keysPressed.add(e.code);
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -1002,22 +1070,49 @@ export class IsoRenderer {
   }
 
   private pickEntityAtWorld(wx: number, wy: number): RenderEntityData | null {
-    const candidates: EntityVisual[] = [];
+    const unitHits: EntityVisual[] = [];
+    const bldgHits: EntityVisual[] = [];
+
     for (const vis of this.visuals.values()) {
       if (!vis.container.visible) continue;
       const sp = vis.sprite;
       if (sp.texture === Texture.EMPTY) continue;
-      const w = Math.abs(sp.width);
-      const h = Math.abs(sp.height);
-      const x0 = vis.container.x - w * sp.anchor.x;
-      const y0 = vis.container.y - h * sp.anchor.y;
-      if (wx >= x0 && wx <= x0 + w && wy >= y0 && wy <= y0 + h) {
-        candidates.push(vis);
+
+      if (vis.data.type === "u") {
+        // Flip-safe generous hitbox so villagers, knights, archers, and trolls are always easy to click
+        const rawW = Math.max(58, Math.abs(sp.width) + 16);
+        const rawH = Math.max(78, Math.abs(sp.height) + 16);
+        const effAnchorX = sp.scale.x < 0 ? 1 - sp.anchor.x : sp.anchor.x;
+        const x0 = vis.container.x - rawW * effAnchorX;
+        const y0 = vis.container.y - rawH * Math.max(0.75, sp.anchor.y);
+        if (wx >= x0 && wx <= x0 + rawW && wy >= y0 && wy <= y0 + rawH) {
+          unitHits.push(vis);
+        }
+      } else {
+        // Trim outer 12% horizontal transparent margins on large structures so units nearby stay clickable
+        const fullW = Math.abs(sp.width);
+        const fullH = Math.abs(sp.height);
+        const padX = fullW > 140 ? fullW * 0.12 : 0;
+        const x0 = vis.container.x - fullW * sp.anchor.x + padX;
+        const x1 = vis.container.x + fullW * (1 - sp.anchor.x) - padX;
+        const y0 = vis.container.y - fullH * sp.anchor.y;
+        const y1 = vis.container.y + fullH * (1 - sp.anchor.y);
+        if (wx >= x0 && wx <= x1 && wy >= y0 && wy <= y1) {
+          bldgHits.push(vis);
+        }
       }
     }
-    if (candidates.length === 0) return null;
-    candidates.sort((a, b) => b.container.zIndex - a.container.zIndex);
-    return candidates[0]!.data;
+
+    // Units always take click priority over overlapping building sprite rectangles
+    if (unitHits.length > 0) {
+      unitHits.sort((a, b) => b.container.zIndex - a.container.zIndex);
+      return unitHits[0]!.data;
+    }
+    if (bldgHits.length > 0) {
+      bldgHits.sort((a, b) => b.container.zIndex - a.container.zIndex);
+      return bldgHits[0]!.data;
+    }
+    return null;
   }
 
   getMetrics(): RendererMetrics {

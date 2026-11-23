@@ -10,6 +10,7 @@ import { ExtendedPortrait } from "./components/ExtendedPortrait.js";
 import { WorldMapModal } from "./components/WorldMapModal.js";
 import { SystemsModal } from "./components/SystemsModal.js";
 import { Minimap } from "./components/Minimap.js";
+import { HudIcon, ResourceIcon } from "./components/GameIcons.js";
 
 const ALL_BIOMES: TerrainSkin[] = [
   "terreno",
@@ -113,29 +114,32 @@ export function App() {
 
       {/* Top Classic Resource & Empire Bar */}
       <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-        <div className="pointer-events-auto flex items-center gap-2 rounded-xl border-2 border-amber-500/80 bg-gradient-to-b from-[#4c2e16]/95 to-[#2b180b]/95 px-3 py-1.5 shadow-xl">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-amber-300 bg-amber-600 text-sm font-black text-white shadow">
+        <div className="pointer-events-auto flex items-center gap-2.5 rounded-xl border-2 border-amber-400/90 bg-gradient-to-b from-[#553318]/96 to-[#2c180a]/96 px-3 py-1.5 shadow-xl">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-amber-300 bg-gradient-to-b from-amber-500 to-amber-700 text-sm font-black text-white shadow">
             {resources.level}
           </div>
           <div className="leading-tight">
             <div className="text-xs font-black text-amber-300">
               {activeSave?.playerInfo.name ?? t.appTitle}
             </div>
-            <div className="text-[11px] text-amber-100/80">
+            <div className="text-[11px] text-amber-100/85">
               {t.resources.xp}: {resources.xp.toLocaleString()} · {t.modes[playMode]}
             </div>
           </div>
         </div>
 
-        {/* Classic Resource Counters */}
-        <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-xl border-2 border-amber-600/75 bg-[#26160b]/92 px-3 py-1.5 text-xs font-extrabold shadow-xl">
-          <ResourcePill icon="🪙" label={t.resources.gold} value={resources.coins} color="text-amber-300" />
-          <ResourcePill icon="🪵" label={t.resources.wood} value={resources.wood} color="text-orange-300" />
-          <ResourcePill icon="🪨" label={t.resources.stone} value={resources.stone} color="text-stone-300" />
-          <ResourcePill icon="🍖" label={t.resources.food} value={resources.food} color="text-rose-300" />
-          <ResourcePill icon="💵" label={t.resources.cash} value={resources.cash} color="text-emerald-300" />
-          <span className="rounded-md border border-sky-400/35 bg-stone-900/90 px-2 py-0.5 text-sky-200">
-            👥 {resources.population}/{resources.maxPopulation}
+        {/* Classic Resource Counters (Crisp cross-platform SVG icons) */}
+        <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-xl border-2 border-amber-500/80 bg-gradient-to-b from-[#3d2410]/95 to-[#221308]/95 px-3 py-1.5 text-xs font-extrabold shadow-xl">
+          <ResourcePill iconType="g" label={t.resources.gold} value={resources.coins} color="text-amber-300" />
+          <ResourcePill iconType="w" label={t.resources.wood} value={resources.wood} color="text-orange-300" />
+          <ResourcePill iconType="s" label={t.resources.stone} value={resources.stone} color="text-stone-200" />
+          <ResourcePill iconType="f" label={t.resources.food} value={resources.food} color="text-rose-300" />
+          <ResourcePill iconType="c" label={t.resources.cash} value={resources.cash} color="text-emerald-300" />
+          <span className="flex items-center gap-1 rounded-md border border-sky-400/35 bg-stone-900/90 px-2 py-0.5 text-sky-200">
+            <ResourceIcon type="pop" className="h-4 w-4" />
+            <span>
+              {resources.population}/{resources.maxPopulation}
+            </span>
           </span>
         </div>
 
@@ -178,15 +182,15 @@ export function App() {
           <span>
             {placingDef
               ? locale === "es"
-                ? `Colocando: ${placingDef.name} (clic izq. para colocar, clic der. cancela)`
-                : `Placing: ${placingDef.name} (left-click place, right-click cancel)`
+                ? `Colocando: ${placingDef.name} (clic izq. para colocar, clic der. o Esc cancela)`
+                : `Placing: ${placingDef.name} (left-click place, right-click or Esc cancels)`
               : movingEntityUid !== null
                 ? locale === "es"
-                  ? "Modo Mover: haz clic en la nueva posición"
-                  : "Move Mode: click destination tile"
+                  ? "Modo Mover: haz clic en la nueva posición (Esc cancela)"
+                  : "Move Mode: click destination tile (Esc cancels)"
                 : locale === "es"
-                  ? "Modo Hechizo: haz clic en el objetivo para lanzar magia"
-                  : "Spell Mode: click target area to cast"}
+                  ? "Modo Hechizo: haz clic en el objetivo para lanzar magia (Esc cancela)"
+                  : "Spell Mode: click target area to cast (Esc cancels)"}
           </span>
           <button
             type="button"
@@ -206,17 +210,26 @@ export function App() {
 
       {/* Battle / Quest / Survival / PvP Status Overlay */}
       {battleStatus && (
-        <div className="pointer-events-auto absolute left-1/2 top-16 z-20 -translate-x-1/2 flex items-center gap-4 rounded-2xl border-2 border-rose-500/80 bg-[#2a1010]/92 px-4 py-2 text-xs font-black shadow-2xl">
-          <span className="text-amber-300">⚔️ {battleStatus.title}</span>
+        <div className="pointer-events-auto absolute left-1/2 top-16 z-20 -translate-x-1/2 flex items-center gap-4 rounded-2xl border-2 border-rose-500/80 bg-[#2a1010]/94 px-4 py-2 text-xs font-black shadow-2xl">
+          <span className="flex items-center gap-1.5 text-amber-300">
+            <HudIcon name="sword" className="h-4 w-4" />
+            {battleStatus.title}
+          </span>
           {battleStatus.mode === "survival" && <span className="text-rose-300">Wave {battleStatus.wave}</span>}
-          <span className="text-emerald-300">🛡️ {battleStatus.playerUnitsAlive}</span>
-          <span className="text-red-300">☠️ {battleStatus.enemiesRemaining}</span>
+          <span className="flex items-center gap-1 text-emerald-300">
+            <HudIcon name="shield" className="h-3.5 w-3.5" />
+            {battleStatus.playerUnitsAlive}
+          </span>
+          <span className="text-red-300">
+            {locale === "es" ? "Enemigos:" : "Enemies:"} {battleStatus.enemiesRemaining}
+          </span>
           <button
             type="button"
             onClick={() => void controllerRef.current?.returnToVillage(false)}
-            className="rounded-lg bg-stone-800 hover:bg-stone-700 px-2.5 py-1 text-amber-200 cursor-pointer"
+            className="flex items-center gap-1 rounded-lg bg-stone-800 hover:bg-stone-700 px-2.5 py-1 text-amber-200 cursor-pointer"
           >
-            🏠 {locale === "es" ? "Volver a Aldea" : "Return Home"}
+            <HudIcon name="home" className="h-3.5 w-3.5" />
+            <span>{locale === "es" ? "Volver a Aldea" : "Return Home"}</span>
           </button>
         </div>
       )}
@@ -225,8 +238,7 @@ export function App() {
       {battleStatus?.finished && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65">
           <div className="w-full max-w-md rounded-2xl border-2 border-amber-400 bg-gradient-to-b from-[#3d2514] to-[#1e1208] p-6 text-center shadow-2xl">
-            <div className="text-4xl">{battleStatus.finished === "victory" ? "🏆" : "💀"}</div>
-            <h2 className="mt-2 text-2xl font-black text-amber-300">
+            <h2 className="text-2xl font-black text-amber-300">
               {battleStatus.finished === "victory"
                 ? locale === "es"
                   ? "¡VICTORIA!"
@@ -235,19 +247,31 @@ export function App() {
                   ? "DERROTA"
                   : "DEFEAT"}
             </h2>
-            <p className="mt-2 text-sm text-amber-100/85">
-              {battleStatus.finished === "victory" || battleStatus.lootGold > 0
-                ? `${locale === "es" ? "Recompensa:" : "Reward:"} +${battleStatus.lootGold} 🪙 · +${battleStatus.lootXp} XP`
-                : locale === "es"
-                  ? "Tus tropas regresan a la aldea para reagruparse."
-                  : "Your troops return home to regroup."}
+            <p className="mt-2 flex items-center justify-center gap-2 text-sm text-amber-100/90">
+              {battleStatus.finished === "victory" || battleStatus.lootGold > 0 ? (
+                <>
+                  <span>{locale === "es" ? "Recompensa:" : "Reward:"}</span>
+                  <span className="flex items-center gap-1 font-black text-amber-300">
+                    +{battleStatus.lootGold}
+                    <ResourceIcon type="g" className="h-4 w-4" />
+                  </span>
+                  <span className="font-black text-sky-300">· +{battleStatus.lootXp} XP</span>
+                </>
+              ) : (
+                <span>
+                  {locale === "es"
+                    ? "Tus tropas regresan a la aldea para reagruparse."
+                    : "Your troops return home to regroup."}
+                </span>
+              )}
             </p>
             <button
               type="button"
               onClick={() => void controllerRef.current?.returnToVillage(true)}
-              className="mt-5 rounded-xl bg-amber-500 hover:bg-amber-400 px-6 py-2.5 text-sm font-black text-stone-950 cursor-pointer"
+              className="mt-5 inline-flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 px-6 py-2.5 text-sm font-black text-stone-950 cursor-pointer"
             >
-              🏠 {locale === "es" ? "Recoger y Volver al Imperio" : "Claim & Return to Empire"}
+              <HudIcon name="home" className="h-4 w-4" />
+              <span>{locale === "es" ? "Recoger y Volver al Imperio" : "Claim & Return to Empire"}</span>
             </button>
           </div>
         </div>
@@ -255,7 +279,7 @@ export function App() {
 
       {/* Toast Notification */}
       {toast && (
-        <div className="pointer-events-none absolute left-1/2 bottom-24 z-30 -translate-x-1/2 rounded-xl border border-amber-400/70 bg-stone-950/90 px-4 py-2 text-xs font-extrabold text-amber-200 shadow-xl">
+        <div className="pointer-events-none absolute left-1/2 bottom-24 z-30 -translate-x-1/2 rounded-xl border border-amber-400/80 bg-stone-950/92 px-4 py-2 text-xs font-extrabold text-amber-200 shadow-xl">
           {toast}
         </div>
       )}
@@ -288,7 +312,7 @@ export function App() {
         />
 
         {/* Center: Classic Action Buttons */}
-        <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-1.5 rounded-2xl border-2 border-amber-500/85 bg-gradient-to-b from-[#3d2514]/95 to-[#221308]/95 px-3 py-2 shadow-2xl text-xs font-black">
+        <div className="pointer-events-auto flex items-center justify-center gap-1 rounded-2xl border-2 border-amber-500/85 bg-gradient-to-b from-[#442812]/96 to-[#221308]/96 px-2.5 py-1.5 shadow-2xl text-xs font-black">
           {playMode === "village" && (
             <button
               type="button"
@@ -297,11 +321,26 @@ export function App() {
                 clickSfx();
                 setActiveModal(activeModal === "shop" ? null : "shop");
               }}
-              className="rounded-xl bg-amber-500 hover:bg-amber-400 px-3.5 py-2 text-stone-950 shadow cursor-pointer"
+              className="flex items-center gap-1 rounded-xl bg-amber-500 hover:bg-amber-400 px-2.5 py-1.5 text-stone-950 shadow cursor-pointer"
             >
-              🏪 {t.hud.shop}
+              <HudIcon name="shop" className="h-4 w-4" />
+              <span>{t.hud.shop}</span>
             </button>
           )}
+
+          <button
+            type="button"
+            data-testid="btn-army"
+            onClick={() => {
+              clickSfx();
+              controllerRef.current?.selectAllPlayerArmy();
+            }}
+            title={locale === "es" ? "Seleccionar todo tu ejército" : "Select your army"}
+            className="flex items-center gap-1 rounded-xl bg-orange-700 hover:bg-orange-600 px-2.5 py-1.5 text-amber-50 shadow cursor-pointer"
+          >
+            <HudIcon name="army" className="h-4 w-4" />
+            <span>{locale === "es" ? "Ejército" : "Army"}</span>
+          </button>
 
           <button
             type="button"
@@ -310,9 +349,10 @@ export function App() {
               clickSfx();
               setActiveModal(activeModal === "worldMap" ? null : "worldMap");
             }}
-            className="rounded-xl bg-red-700 hover:bg-red-600 px-3.5 py-2 text-white shadow cursor-pointer"
+            className="flex items-center gap-1.5 rounded-xl bg-red-700 hover:bg-red-600 px-3 py-2 text-white shadow cursor-pointer"
           >
-            🗺️ {t.hud.worldMap}
+            <HudIcon name="map" className="h-4 w-4" />
+            <span>{t.hud.worldMap}</span>
           </button>
 
           <button
@@ -323,9 +363,10 @@ export function App() {
               setSystemsTab("goals");
               setActiveModal(activeModal === "systems" ? null : "systems");
             }}
-            className="rounded-xl bg-emerald-700 hover:bg-emerald-600 px-3 py-2 text-white cursor-pointer"
+            className="flex items-center gap-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 px-3 py-2 text-white cursor-pointer"
           >
-            📜 {t.hud.goals}
+            <HudIcon name="goals" className="h-4 w-4" />
+            <span>{t.hud.goals}</span>
           </button>
 
           <button
@@ -335,9 +376,10 @@ export function App() {
               setSystemsTab("market");
               setActiveModal("systems");
             }}
-            className="rounded-xl bg-stone-800 hover:bg-stone-700 px-3 py-2 text-amber-200 cursor-pointer"
+            className="flex items-center gap-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 px-3 py-2 text-amber-200 cursor-pointer"
           >
-            ⚖️ {locale === "es" ? "Mercado" : "Market"}
+            <HudIcon name="market" className="h-4 w-4" />
+            <span>{locale === "es" ? "Mercado" : "Market"}</span>
           </button>
 
           <button
@@ -347,9 +389,10 @@ export function App() {
               setSystemsTab("storage");
               setActiveModal("systems");
             }}
-            className="rounded-xl bg-stone-800 hover:bg-stone-700 px-3 py-2 text-sky-200 cursor-pointer"
+            className="flex items-center gap-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 px-3 py-2 text-sky-200 cursor-pointer"
           >
-            📦 {t.hud.storage}
+            <HudIcon name="storage" className="h-4 w-4" />
+            <span>{t.hud.storage}</span>
           </button>
 
           <select
@@ -363,11 +406,11 @@ export function App() {
                 void controllerRef.current?.sendCommands([{ cmd: "set_skin", args: [skinIdx] }]);
               }
             }}
-            className="rounded-xl border border-amber-500/45 bg-stone-900 px-2 py-2 text-amber-100"
+            className="rounded-xl border border-amber-500/45 bg-stone-900 px-2.5 py-2 text-amber-100"
           >
             {ALL_BIOMES.map((b) => (
               <option key={b} value={b}>
-                🌿 {t.biomes[b] ?? b}
+                {t.biomes[b] ?? b}
               </option>
             ))}
           </select>
@@ -376,30 +419,31 @@ export function App() {
             type="button"
             onClick={() => setMusicEnabled(!musicEnabled)}
             title={t.hud.music}
-            className={`rounded-xl px-2.5 py-2 cursor-pointer ${
+            className={`rounded-xl p-2 cursor-pointer ${
               musicEnabled ? "bg-emerald-700 text-white" : "bg-stone-800 text-stone-400"
             }`}
           >
-            {musicEnabled ? "🔊" : "🔇"}
+            <HudIcon name={musicEnabled ? "soundOn" : "soundOff"} className="h-4 w-4" />
           </button>
           <button
             type="button"
             onClick={() => setSfxEnabled(!sfxEnabled)}
             title={t.hud.sfx}
-            className={`rounded-xl px-2.5 py-2 cursor-pointer ${
+            className={`rounded-xl p-2 cursor-pointer ${
               sfxEnabled ? "bg-emerald-700 text-white" : "bg-stone-800 text-stone-400"
             }`}
           >
-            {sfxEnabled ? "🔔" : "🔕"}
+            <HudIcon name={sfxEnabled ? "sfxOn" : "sfxOff"} className="h-4 w-4" />
           </button>
           <button
             type="button"
             onClick={() => setShowGrid(!showGrid)}
-            className={`rounded-xl px-2.5 py-2 cursor-pointer ${
+            title={locale === "es" ? "Mostrar/ocultar cuadrícula" : "Toggle grid"}
+            className={`rounded-xl p-2 cursor-pointer ${
               showGrid ? "bg-amber-500 text-stone-950" : "bg-stone-800 text-amber-200"
             }`}
           >
-            #
+            <HudIcon name="grid" className="h-4 w-4" />
           </button>
         </div>
 
@@ -428,14 +472,15 @@ export function App() {
             </button>
             <button
               type="button"
+              title={locale === "es" ? "Centrar en la aldea" : "Center on village"}
               onClick={() => {
                 clickSfx();
                 controllerRef.current?.renderer.camera.centerOnTile(50, 50);
                 controllerRef.current?.renderer.camera.setZoom(0.85);
               }}
-              className="rounded bg-amber-600 hover:bg-amber-500 px-2 py-0.5 text-stone-950 font-black cursor-pointer"
+              className="flex h-6 items-center justify-center rounded bg-amber-600 hover:bg-amber-500 px-1.5 text-stone-950 font-black cursor-pointer"
             >
-              🎯
+              <HudIcon name="center" className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
@@ -467,11 +512,11 @@ export function App() {
   );
 }
 
-function ResourcePill(props: { icon: string; label: string; value: number; color: string }) {
+function ResourcePill(props: { iconType: "g" | "w" | "s" | "f" | "c"; label: string; value: number; color: string }) {
   return (
-    <span className={`flex items-center gap-1 rounded-md border border-amber-500/20 bg-stone-900/90 px-2 py-0.5 ${props.color}`}>
-      <span>{props.icon}</span>
-      <span className="hidden md:inline font-semibold text-amber-100/70">{props.label}:</span>
+    <span className={`flex items-center gap-1.5 rounded-md border border-amber-500/25 bg-stone-900/90 px-2 py-0.5 ${props.color}`}>
+      <ResourceIcon type={props.iconType} className="h-4 w-4" />
+      <span className="hidden md:inline font-semibold text-amber-100/75">{props.label}:</span>
       <span>{Math.floor(props.value).toLocaleString()}</span>
     </span>
   );

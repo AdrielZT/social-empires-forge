@@ -299,7 +299,13 @@ export function applyCommand(
       if (!def) return { ok: false, error: `Unknown item ${itemId}`, events };
 
       // PR #48 fix: harvesting trees/stones/gold rocks yields fixed client amount (no +20% villager inflation)
-      const isResourceNode = def.subcatFunctional === 2 || def.subcatFunctional === 3 || def.subcatFunctional === 4;
+      const isResourceNode =
+        def.subcatFunctional === 2 ||
+        def.subcatFunctional === 3 ||
+        def.subcatFunctional === 4 ||
+        def.subcatFunctional === 125 ||
+        def.subcatFunctional === 126 ||
+        def.subcatFunctional === 127;
       const mult = isResourceNode ? 1.0 : (COLLECT_MULTIPLIERS[multIdx] ?? 1.0);
       const amount = Math.round(def.collect * mult);
       const resType = def.collectType || "g";

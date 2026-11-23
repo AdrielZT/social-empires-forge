@@ -2,24 +2,16 @@ import { useMemo, useState } from "react";
 import { getUiStrings } from "@sef/game-data";
 import type { GameItem } from "@sef/shared-types";
 import { useGameStore } from "../store/gameStore.js";
-
-const COST_ICON: Record<string, string> = {
-  g: "🪙",
-  w: "🪵",
-  s: "🪨",
-  f: "🍖",
-  c: "💵",
-  "": "✨"
-};
+import { HudIcon, ResourceIcon } from "./GameIcons.js";
 
 const TABS = [
-  { id: "1", icon: "🏘️" },
-  { id: "2", icon: "🛡️" },
-  { id: "3", icon: "⚔️" },
-  { id: "4", icon: "🌳" },
-  { id: "5", icon: "🏛️" },
-  { id: "12", icon: "🐉" },
-  { id: "all", icon: "📦" }
+  { id: "1" },
+  { id: "2" },
+  { id: "3" },
+  { id: "4" },
+  { id: "5" },
+  { id: "12" },
+  { id: "all" }
 ];
 
 export function ShopModal(props: { onSelectPlace: (item: GameItem) => void }) {
@@ -54,7 +46,7 @@ export function ShopModal(props: { onSelectPlace: (item: GameItem) => void }) {
         {/* Header */}
         <div className="flex items-center justify-between border-b border-amber-500/40 bg-[#2b190b] px-5 py-3">
           <div className="flex items-center gap-3">
-            <span className="text-2xl">🏪</span>
+            <HudIcon name="shop" className="h-7 w-7" />
             <div>
               <h2 className="text-lg font-black text-amber-300">{t.hud.shop}</h2>
               <p className="text-xs text-amber-100/70">
@@ -94,7 +86,7 @@ export function ShopModal(props: { onSelectPlace: (item: GameItem) => void }) {
                       : "bg-stone-800/90 text-amber-100 hover:bg-stone-700"
                   }`}
                 >
-                  {tab.icon} {label}
+                  {label}
                 </button>
               );
             })}
@@ -145,17 +137,42 @@ export function ShopModal(props: { onSelectPlace: (item: GameItem) => void }) {
                 </span>
               </div>
               <div className="mt-1.5 line-clamp-1 text-xs font-black text-amber-200">{item.name}</div>
-              <div className="mt-0.5 text-[10px] text-amber-100/65">
-                {item.type === "u"
-                  ? `⚔️${item.attack} ❤️${item.life} 🛡️${item.defense}`
-                  : item.collect > 0
-                    ? `+${item.collect} ${COST_ICON[item.collectType] ?? "🪙"}`
-                    : item.population > 0
-                      ? `+${item.population} 👥`
-                      : `❤️${item.life}`}
+              <div className="mt-0.5 flex items-center justify-center gap-1.5 text-[10px] text-amber-100/75">
+                {item.type === "u" ? (
+                  <>
+                    <span className="flex items-center gap-0.5">
+                      <HudIcon name="sword" className="h-3 w-3" />
+                      {item.attack}
+                    </span>
+                    <span className="flex items-center gap-0.5">
+                      <HudIcon name="heart" className="h-3 w-3" />
+                      {item.life}
+                    </span>
+                    <span className="flex items-center gap-0.5">
+                      <HudIcon name="shield" className="h-3 w-3" />
+                      {item.defense}
+                    </span>
+                  </>
+                ) : item.collect > 0 ? (
+                  <span className="flex items-center gap-1">
+                    +{item.collect}
+                    <ResourceIcon type={item.collectType || "g"} className="h-3 w-3" />
+                  </span>
+                ) : item.population > 0 ? (
+                  <span className="flex items-center gap-1">
+                    +{item.population}
+                    <ResourceIcon type="pop" className="h-3 w-3" />
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1">
+                    <HudIcon name="heart" className="h-3 w-3" />
+                    {item.life}
+                  </span>
+                )}
               </div>
-              <div className="mt-1.5 w-full rounded-md bg-amber-600/90 group-hover:bg-amber-500 py-1 text-xs font-black text-stone-950">
-                {COST_ICON[item.costType] ?? "🪙"} {item.cost.toLocaleString()}
+              <div className="mt-1.5 flex w-full items-center justify-center gap-1 rounded-md bg-amber-600/90 group-hover:bg-amber-500 py-1 text-xs font-black text-stone-950">
+                <ResourceIcon type={item.costType || "g"} className="h-3.5 w-3.5" />
+                <span>{item.cost.toLocaleString()}</span>
               </div>
             </button>
           ))}

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { computeMarketPrice } from "@sef/engine-sim";
 import type { GameController } from "../engine/GameController.js";
 import { useGameStore } from "../store/gameStore.js";
+import { HudIcon, ResourceIcon } from "./GameIcons.js";
 
 export function SystemsModal(props: { controller: GameController | null }) {
   const locale = useGameStore((s) => s.locale);
@@ -37,9 +38,9 @@ export function SystemsModal(props: { controller: GameController | null }) {
 
   const handleShootDart = async () => {
     const prizes = [
-      { label: "+500 🪙", gold: 500 },
-      { label: "+1,200 🪙", gold: 1200 },
-      { label: "+2,500 🪙", gold: 2500 }
+      { label: "+500 Oro", gold: 500 },
+      { label: "+1,200 Oro", gold: 1200 },
+      { label: "+2,500 Oro", gold: 2500 }
     ];
     const pick = prizes[Math.floor(Math.random() * prizes.length)]!;
     await props.controller?.sendCommands([{ cmd: "gold_statue_conversion", args: [pick.gold] }]);
@@ -63,7 +64,7 @@ export function SystemsModal(props: { controller: GameController | null }) {
       <div className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border-2 border-amber-500/85 bg-gradient-to-b from-[#392412] to-[#1e1209] shadow-2xl text-amber-50">
         <div className="flex items-center justify-between border-b border-amber-500/40 bg-[#2b190b] px-5 py-3">
           <div className="flex items-center gap-2.5">
-            <span className="text-2xl">🏛️</span>
+            <HudIcon name="goals" className="h-6 w-6" />
             <h2 className="text-lg font-black text-amber-300">
               {locale === "es" ? "Sistemas del Imperio (1.4.07)" : "Empire Systems (1.4.07)"}
             </h2>
@@ -80,11 +81,11 @@ export function SystemsModal(props: { controller: GameController | null }) {
         <div className="flex flex-wrap gap-1.5 border-b border-amber-500/30 bg-[#241509] px-4 py-2 text-xs font-extrabold">
           {(
             [
-              ["goals", locale === "es" ? `📜 Objetivos (${goals.length})` : `📜 Goals (${goals.length})`],
-              ["market", locale === "es" ? "⚖️ Mercado" : "⚖️ Market"],
-              ["storage", locale === "es" ? `📦 Inventario (${storedEntries.length})` : `📦 Storage (${storedEntries.length})`],
-              ["graveyard", locale === "es" ? "⚰️ Cementerio" : "⚰️ Graveyard"],
-              ["specials", locale === "es" ? "🐉 Especiales 1.4.07" : "🐉 1.4.07 Specials"]
+              ["goals", locale === "es" ? `Objetivos (${goals.length})` : `Goals (${goals.length})`],
+              ["market", locale === "es" ? "Mercado" : "Market"],
+              ["storage", locale === "es" ? `Inventario (${storedEntries.length})` : `Storage (${storedEntries.length})`],
+              ["graveyard", locale === "es" ? "Cementerio" : "Graveyard"],
+              ["specials", locale === "es" ? "Especiales 1.4.07" : "1.4.07 Specials"]
             ] as const
           ).map(([id, label]) => (
             <button
@@ -120,17 +121,20 @@ export function SystemsModal(props: { controller: GameController | null }) {
                       type="button"
                       disabled={claimed}
                       onClick={() => void handleClaimGoal(g.id, g.reward)}
-                      className={`shrink-0 rounded-lg px-3 py-1.5 font-black cursor-pointer ${
+                      className={`shrink-0 flex items-center gap-1 rounded-lg px-3 py-1.5 font-black cursor-pointer ${
                         claimed
                           ? "bg-emerald-900/50 text-emerald-300 cursor-default"
                           : "bg-amber-500 hover:bg-amber-400 text-stone-950"
                       }`}
                     >
-                      {claimed
-                        ? locale === "es"
-                          ? "✓ Completado"
-                          : "✓ Claimed"
-                        : `🪙 +${Math.max(100, g.reward)}`}
+                      {claimed ? (
+                        <span>{locale === "es" ? "✓ Completado" : "✓ Claimed"}</span>
+                      ) : (
+                        <>
+                          <ResourceIcon type="g" className="h-3.5 w-3.5" />
+                          <span>+{Math.max(100, g.reward)}</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 );
@@ -143,32 +147,38 @@ export function SystemsModal(props: { controller: GameController | null }) {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {(
                   [
-                    ["w", locale === "es" ? "Madera" : "Wood", "🪵"],
-                    ["s", locale === "es" ? "Piedra" : "Stone", "🪨"],
-                    ["f", locale === "es" ? "Comida" : "Food", "🍖"]
+                    ["w", locale === "es" ? "Madera" : "Wood"],
+                    ["s", locale === "es" ? "Piedra" : "Stone"],
+                    ["f", locale === "es" ? "Comida" : "Food"]
                   ] as const
-                ).map(([res, name, icon]) => {
+                ).map(([res, name]) => {
                   const steps = map0?.resourcesTraded[res] ?? 0;
                   const buyP = computeMarketPrice(res, steps, "buy");
                   const sellP = computeMarketPrice(res, steps, "sell");
                   return (
                     <div key={res} className="rounded-xl border border-amber-500/40 bg-stone-900/90 p-4 text-center">
-                      <div className="text-2xl">{icon}</div>
-                      <div className="mt-1 text-sm font-black text-amber-300">{name} (×100)</div>
+                      <div className="flex justify-center">
+                        <ResourceIcon type={res} className="h-9 w-9" />
+                      </div>
+                      <div className="mt-1.5 text-sm font-black text-amber-300">{name} (×100)</div>
                       <div className="mt-3 flex flex-col gap-2 text-xs font-black">
                         <button
                           type="button"
                           onClick={() => void handleMarketTrade(res, "buy")}
-                          className="rounded-lg bg-emerald-600 hover:bg-emerald-500 py-1.5 text-white cursor-pointer"
+                          className="flex items-center justify-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 py-1.5 text-white cursor-pointer"
                         >
-                          {locale === "es" ? "Comprar" : "Buy"} · 🪙{buyP}
+                          <span>{locale === "es" ? "Comprar" : "Buy"} ·</span>
+                          <ResourceIcon type="g" className="h-3.5 w-3.5" />
+                          <span>{buyP}</span>
                         </button>
                         <button
                           type="button"
                           onClick={() => void handleMarketTrade(res, "sell")}
-                          className="rounded-lg bg-amber-600 hover:bg-amber-500 py-1.5 text-stone-950 cursor-pointer"
+                          className="flex items-center justify-center gap-1 rounded-lg bg-amber-600 hover:bg-amber-500 py-1.5 text-stone-950 cursor-pointer"
                         >
-                          {locale === "es" ? "Vender" : "Sell"} · +🪙{sellP}
+                          <span>{locale === "es" ? "Vender" : "Sell"} · +</span>
+                          <ResourceIcon type="g" className="h-3.5 w-3.5" />
+                          <span>{sellP}</span>
                         </button>
                       </div>
                     </div>
@@ -176,15 +186,19 @@ export function SystemsModal(props: { controller: GameController | null }) {
                 })}
               </div>
               <div className="flex items-center justify-between rounded-xl border border-emerald-500/40 bg-stone-900/85 p-3 text-xs">
-                <span>
-                  💵 {locale === "es" ? "Cambiar 5 Cash por 2,500 Oro" : "Exchange 5 Cash for 2,500 Gold"}
+                <span className="flex items-center gap-1.5">
+                  <ResourceIcon type="c" className="h-4 w-4" />
+                  <span>{locale === "es" ? "Cambiar 5 Cash por 2,500 Oro" : "Exchange 5 Cash for 2,500 Gold"}</span>
                 </span>
                 <button
                   type="button"
                   onClick={() => void props.controller?.sendCommands([{ cmd: "exchange_cash", args: [] }])}
-                  className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 font-black text-white cursor-pointer"
+                  className="flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 font-black text-white cursor-pointer"
                 >
-                  💵5 → 🪙2,500
+                  <ResourceIcon type="c" className="h-3.5 w-3.5" />
+                  <span>5 →</span>
+                  <ResourceIcon type="g" className="h-3.5 w-3.5" />
+                  <span>2,500</span>
                 </button>
               </div>
             </div>
@@ -228,7 +242,7 @@ export function SystemsModal(props: { controller: GameController | null }) {
                             onClick={() => void props.controller?.sendCommands([{ cmd: "sell_stored_item", args: [def.id] }])}
                             className="rounded bg-red-900 hover:bg-red-800 px-2 py-1 text-[11px] font-black cursor-pointer"
                           >
-                            💰
+                            {locale === "es" ? "Vender" : "Sell"}
                           </button>
                         </div>
                       </div>
@@ -242,7 +256,7 @@ export function SystemsModal(props: { controller: GameController | null }) {
           {tab === "graveyard" && (
             <div className="space-y-3">
               <div className="rounded-xl border border-purple-500/40 bg-stone-900/85 p-3 text-xs">
-                🧪 {locale === "es" ? "Pociones de resurrección disponibles:" : "Available resurrection potions:"}{" "}
+                {locale === "es" ? "Pociones de resurrección disponibles:" : "Available resurrection potions:"}{" "}
                 <span className="font-black text-purple-300">{potions}</span>
               </div>
               {Object.keys(deadHeroes).length === 0 && Object.keys(graveyard).length === 0 ? (
@@ -263,9 +277,10 @@ export function SystemsModal(props: { controller: GameController | null }) {
                           <button
                             type="button"
                             onClick={() => void handleResurrect(def.id, false)}
-                            className="flex-1 rounded bg-amber-500 py-1 font-black text-stone-950 cursor-pointer"
+                            className="flex-1 flex items-center justify-center gap-1 rounded bg-amber-500 py-1 font-black text-stone-950 cursor-pointer"
                           >
-                            🪙 500
+                            <ResourceIcon type="g" className="h-3.5 w-3.5" />
+                            <span>500</span>
                           </button>
                           {potions > 0 && (
                             <button
@@ -273,7 +288,7 @@ export function SystemsModal(props: { controller: GameController | null }) {
                               onClick={() => void handleResurrect(def.id, true)}
                               className="flex-1 rounded bg-purple-600 py-1 font-black text-white cursor-pointer"
                             >
-                              🧪 1
+                              {locale === "es" ? "Poción ×1" : "Potion ×1"}
                             </button>
                           )}
                         </div>
@@ -289,7 +304,7 @@ export function SystemsModal(props: { controller: GameController | null }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <div className="rounded-xl border border-amber-500/45 bg-stone-900/90 p-4">
                 <h3 className="text-sm font-black text-amber-300">
-                  🎁 {locale === "es" ? "Bono Diario (Daily Bonus)" : "Daily Bonus"}
+                  {locale === "es" ? "Bono Diario (Daily Bonus)" : "Daily Bonus"}
                 </h3>
                 <p className="mt-1 text-amber-100/75">
                   {locale === "es"
@@ -299,15 +314,18 @@ export function SystemsModal(props: { controller: GameController | null }) {
                 <button
                   type="button"
                   onClick={() => void handleDailyBonus()}
-                  className="mt-3 rounded-lg bg-amber-500 hover:bg-amber-400 px-4 py-1.5 font-black text-stone-950 cursor-pointer"
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 px-4 py-1.5 font-black text-stone-950 cursor-pointer"
                 >
-                  🎁 +1,000 🪙 & +2 💵
+                  <span>+1,000</span>
+                  <ResourceIcon type="g" className="h-3.5 w-3.5" />
+                  <span>& +2</span>
+                  <ResourceIcon type="c" className="h-3.5 w-3.5" />
                 </button>
               </div>
 
               <div className="rounded-xl border border-rose-500/45 bg-stone-900/90 p-4">
                 <h3 className="text-sm font-black text-rose-300">
-                  🎯 {locale === "es" ? "Minijuego de Dardos (Darts)" : "Darts Minigame"}
+                  {locale === "es" ? "Minijuego de Dardos (Darts)" : "Darts Minigame"}
                 </h3>
                 <p className="mt-1 text-amber-100/75">
                   {locale === "es"

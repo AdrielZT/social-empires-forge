@@ -215,4 +215,33 @@ describe("Pathfinder & BattleEngine (RTS + 15 Magic Spells)", () => {
     const avgTickMs = (performance.now() - t0) / 60;
     expect(avgTickMs).toBeLessThan(16.6);
   });
+
+  it("keeps neutral trees immune from troll attacks and lets villagers harvest trees (subcatFunctional 125)", () => {
+    const grid = new OccupancyGrid();
+    const tree = makeItem({ id: 19, name: "Tree", type: "b", race: "n", subcatFunctional: 125, life: 50, attack: 2, collect: 20, collectType: "w" });
+    const troll = makeItem({ id: 525, name: "Small Troll", type: "u", race: "t", life: 80, attack: 12, attackRange: 1, attackInterval: 15 });
+    const villager = makeItem({ id: 500, name: "Villager I", type: "u", race: "h", subcatFunctional: 71, life: 60, attack: 6 });
+
+    const engine = new BattleEngine(grid, new Map([[19, tree], [525, troll], [500, villager]]));
+    const treeEnt = engine.spawnFromItem(19, 45, 50, "neutral")!;
+    const remoteTree = engine.spawnFromItem(19, 59, 50, "neutral")!;
+    const trollEnt = engine.spawnFromItem(525, 60, 50, "enemy")!;
+    trollEnt.stance = "defensive";
+    const vEnt = engine.spawnFromItem(500, 42, 50, "player")!;
+    vEnt.stance = "stand";
+
+    // Order villager to harvest tree; defensive troll right next to remoteTree must NOT attack remoteTree or chase across map
+    engine.orderHarvest(vEnt.uid, treeEnt.uid);
+    let harvested = false;
+    for (let tick = 0; tick < 160; tick++) {
+      const evs = engine.step();
+      if (evs.some((ev) => ev.type === "harvest" && ev.resourceType === "w" && ev.amount === 20)) {
+        harvested = true;
+      }
+    }
+    expect(remoteTree.hp).toBe(50);
+    expect(remoteTree.alive).toBe(true);
+    expect(treeEnt.hp).toBe(50);
+    expect(harvested).toBe(true);
+  });
 });

@@ -427,8 +427,8 @@ export class BattleEngine {
       // Combat AI & movement
       if (ent.type === "u") {
         this.tickUnitAI(ent, events);
-      } else if (ent.attack > 0 && ent.attackRange > 0) {
-        // Defensive towers & castles auto-fire at nearby enemies
+      } else if (ent.team !== "neutral" && ent.attack > 0 && ent.attackRange > 0) {
+        // Defensive towers & castles auto-fire at nearby enemies (never neutral trees!)
         this.tickTowerCombat(ent, events);
       }
     }
@@ -476,25 +476,38 @@ export class BattleEngine {
       return;
     }
 
-    const dist = Math.hypot(res.tx - worker.tx, res.ty - worker.ty);
-    if (dist > Math.max(res.width, res.height) + 0.9) {
+    const dist = this.distanceBetween(worker, res);
+    if (dist > 1.35) {
+      if (worker.path.length === 0) {
+        worker.path = findPath(
+          this.grid,
+          { tx: worker.tx, ty: worker.ty },
+          { tx: res.tx, ty: res.ty },
+          { flying: false, ignoreEntityId: worker.uid, targetEntityId: res.uid, stopDistance: 1.2 }
+        );
+        if (worker.path.length === 0) {
+          // Walk directly toward adjacent tile if pathfinder hit local congestion
+          worker.path = [{ tx: Math.round(res.tx), ty: Math.round(res.ty) }];
+        }
+      }
       this.stepAlongPath(worker);
       return;
     }
 
+    worker.path = [];
     worker.orientation = deltaToOrientation(res.tx - worker.tx, res.ty - worker.ty);
     worker.animState = 4; // ANIMATION_HARVESTING
     worker.harvestProgress += 1;
 
-    if (worker.harvestProgress % 45 === 0) {
+    if (worker.harvestProgress % 35 === 0) {
       const sfx =
         res.collectType === "w" ? "Lumber3Sound" : res.collectType === "f" ? "FarmSound" : "Rock6Sound";
       events.push({ type: "sfx", name: sfx });
     }
 
-    if (worker.harvestProgress >= 120) {
+    if (worker.harvestProgress >= 75) {
       worker.harvestProgress = 0;
-      const amount = Math.max(10, res.collectAmount || 25);
+      const amount = Math.max(10, res.collectAmount || 20);
       events.push({
         type: "harvest",
         workerUid: worker.uid,
@@ -786,9 +799,11 @@ export class BattleEngine {
   }
 
   private findNearestEnemy(origin: SimEntity, maxRange: number): SimEntity | null {
+    if (origin.team === "neutral") return null;
     const enemyTeam: TeamId = origin.team === "player" ? "enemy" : "player";
+    const effectiveRange = origin.stance === "defensive" ? Math.min(maxRange, 4.5) : maxRange;
     let best: SimEntity | null = null;
-    let bestDist = maxRange;
+    let bestDist = effectiveRange;
     for (const e of this.entities.values()) {
       if (!e.alive || e.team !== enemyTeam) continue;
       const d = this.distanceBetween(origin, e);
