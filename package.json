@@ -1,0 +1,32 @@
+{
+  "name": "social-empires-forge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.21.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @sef/server --filter @sef/web dev",
+    "dev:server": "pnpm --filter @sef/server dev",
+    "dev:web": "pnpm --filter @sef/web dev",
+    "build": "pnpm -r --workspace-concurrency=4 build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "assets:sync": "pnpm --filter @sef/asset-pipeline sync",
+    "assets:data": "pnpm --filter @sef/asset-pipeline compile-data",
+    "assets:audio": "pnpm --filter @sef/asset-pipeline extract-audio",
+    "assets:sprites": "pnpm --filter @sef/asset-pipeline extract-sprites",
+    "assets:decompile": "pnpm --filter @sef/asset-pipeline decompile-as3",
+    "assets:verify": "pnpm --filter @sef/asset-pipeline verify",
+    "assets:pipeline": "pnpm assets:sync && pnpm assets:data && pnpm assets:audio && pnpm assets:sprites && pnpm assets:verify"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

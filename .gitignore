@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Heavy local caches & generated binary assets (reproducible via pnpm assets:pipeline)
+.cache/
+assets/generated/
+
+# Local databases & runtime saves
+data/
+saves/
+*.db
+*.db-wal
+*.db-shm
+*.bak
+
+# Logs & tests
+logs/
+*.log
+coverage/
+playwright-report/
+test-results/
+
+# OS & editors
+.DS_Store
+Thumbs.db
+.env
+.env.local

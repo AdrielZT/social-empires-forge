@@ -1,0 +1,21 @@
+{
+  "name": "@sef/asset-pipeline",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "sync": "tsx src/sync-source.ts",
+    "compile-data": "tsx src/compile-game-data.ts",
+    "extract-audio": "python3 src/extract_audio.py",
+    "extract-sprites": "python3 src/extract_sprites.py",
+    "decompile-as3": "tsx src/decompile-as3.ts",
+    "verify": "tsx src/verify-manifest.ts",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@sef/shared-types": "workspace:*",
+    "fast-json-patch": "^3.1.1",
+    "zod": "^3.24.1"
+  }
+}
