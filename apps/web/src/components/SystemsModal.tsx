@@ -2,6 +2,7 @@ import { useState } from "react";
 import { computeMarketPrice } from "@sef/engine-sim";
 import type { GameController } from "../engine/GameController.js";
 import { useGameStore } from "../store/gameStore.js";
+import { thumbUrl } from "../api/paths.js";
 import { HudIcon, ResourceIcon } from "./GameIcons.js";
 
 export function SystemsModal(props: { controller: GameController | null }) {
@@ -220,8 +221,11 @@ export function SystemsModal(props: { controller: GameController | null }) {
                     return (
                       <div key={idStr} className="rounded-xl border border-amber-500/35 bg-stone-900/90 p-2.5 text-center text-xs">
                         <img
-                          src={`/assets/ui/thumbs/${def.imgName}.jpg`}
+                          src={thumbUrl(def.imgName)}
                           alt={def.name}
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.opacity = "0.2";
+                          }}
                           className="mx-auto h-14 w-14 rounded object-contain bg-stone-950"
                         />
                         <div className="mt-1 font-black text-amber-200 truncate">{def.name}</div>

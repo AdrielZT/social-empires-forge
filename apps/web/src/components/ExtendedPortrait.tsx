@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { getUiStrings } from "@sef/game-data";
 import { useGameStore } from "../store/gameStore.js";
+import { thumbUrl } from "../api/paths.js";
 import { HudIcon, ResourceIcon } from "./GameIcons.js";
 
 const RESOURCE_NODE_SUBCATS = new Set([2, 3, 4, 125, 126, 127]);
@@ -74,7 +75,7 @@ export function ExtendedPortrait(props: {
       {/* Header */}
       <div className="flex items-start gap-2.5">
         <img
-          src={`/assets/ui/thumbs/${sel.imgName}.jpg`}
+          src={thumbUrl(sel.imgName)}
           onError={(e) => {
             (e.currentTarget as HTMLImageElement).style.display = "none";
           }}
@@ -198,8 +199,11 @@ export function ExtendedPortrait(props: {
                 className="flex items-center gap-1.5 rounded-lg border border-amber-500/35 bg-stone-900/90 hover:bg-amber-600/30 p-1 text-left cursor-pointer"
               >
                 <img
-                  src={`/assets/ui/thumbs/${u.imgName}.jpg`}
+                  src={thumbUrl(u.imgName)}
                   alt={u.name}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.opacity = "0.2";
+                  }}
                   className="h-7 w-7 rounded object-cover bg-stone-950 shrink-0"
                 />
                 <div className="min-w-0 leading-tight">

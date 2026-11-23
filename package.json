@@ -14,6 +14,7 @@
     "dev:web": "pnpm --filter @sef/web dev",
     "start": "tsx apps/server/src/index.ts",
     "build": "pnpm -r --workspace-concurrency=4 build",
+    "build:pages": "node scripts/prepare-pages.mjs",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "test:e2e": "tsx tests/e2e/verify-game.mjs",

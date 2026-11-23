@@ -1,0 +1,101 @@
+name: Deploy Social Empires Forge to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore compiled assets from GitHub Actions cache
+        id: cache-assets
+        uses: actions/cache@v4
+        with:
+          path: assets/generated
+          key: sef-assets-1.4.07-v1
+
+      - name: Restore or compile game assets (1.4.07)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ ! -f assets/generated/manifest.json ]; then
+            echo "[pages] Cache miss — checking GitHub Release assets-v1.4.07..."
+            if gh release download assets-v1.4.07 -p social-empires-forge-assets-1.4.07.tar.gz -D /tmp; then
+              mkdir -p assets/generated
+              tar -xzf /tmp/social-empires-forge-assets-1.4.07.tar.gz -C assets/generated
+              rm -f /tmp/social-empires-forge-assets-1.4.07.tar.gz
+              echo "[pages] Restored assets/generated from Release assets-v1.4.07."
+            else
+              echo "[pages] First-time build — compiling 1.4.07 assets from upstream..."
+              python3 -m pip install --quiet --break-system-packages pillow || python3 -m pip install --quiet pillow
+              pnpm assets:pipeline
+            fi
+          fi
+
+          if [ ! -f assets/generated/manifest.json ]; then
+            echo "[pages] ERROR: assets/generated/manifest.json missing after restore/compile!"
+            exit 1
+          fi
+
+          if ! gh release view assets-v1.4.07 >/dev/null 2>&1; then
+            echo "[pages] Archiving compiled assets to GitHub Release assets-v1.4.07 for fast future deploys..."
+            tar -czf /tmp/social-empires-forge-assets-1.4.07.tar.gz -C assets/generated .
+            gh release create assets-v1.4.07 /tmp/social-empires-forge-assets-1.4.07.tar.gz \
+              --title "Social Empires Forge Compiled Assets (1.4.07)" \
+              --notes "Compiled WebP sprite atlases, terrain tiles, SFX/music audio, and UI thumbnails for Social Empires Forge 1.4.07."
+            rm -f /tmp/social-empires-forge-assets-1.4.07.tar.gz
+          fi
+
+      - name: Build static web app for GitHub Pages
+        env:
+          VITE_BASE_PATH: /social-empires-forge/
+          VITE_STATIC_MODE: "true"
+        run: |
+          set -euo pipefail
+          pnpm build:pages
+          rm -rf apps/web/dist/assets
+          cp -a assets/generated apps/web/dist/assets
+          du -sh apps/web/dist
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

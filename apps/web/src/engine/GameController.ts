@@ -18,6 +18,8 @@ import {
   type RenderProjectileData
 } from "@sef/engine-render";
 import { AudioManager, SFX_NAMES } from "@sef/engine-audio";
+import { gameApi } from "../api/gameApi.js";
+import { assetsBaseUrl, audioBaseUrl } from "../api/paths.js";
 import { useGameStore, type PlayMode, type SelectedEntitySummary } from "../store/gameStore.js";
 
 const RESOURCE_SUBCATS = new Set([2, 3, 4, 122, 125, 126, 127]);
@@ -78,15 +80,19 @@ export class GameController {
   private collectedCooldownUntil = new Map<number, number>(); // building uid -> timestamp ms
 
   constructor(hostEl: HTMLElement) {
-    this.audio = new AudioManager("/assets/audio");
-    this.renderer = new IsoRenderer(hostEl, {
-      onEntitySelect: (ent, additive) => this.handleEntitySelect(ent, additive),
-      onBoxSelect: (uids) => this.handleBoxSelect(uids),
-      onTileHover: (tx, ty) => this.handleTileHover(tx, ty),
-      onTileClick: (tx, ty, button, hit, mods) => void this.handleTileClick(tx, ty, button, hit, mods),
-      onEscape: () => this.handleEscape(),
-      onTickFrame: (dtMs) => this.onAnimationFrame(dtMs)
-    });
+    this.audio = new AudioManager(audioBaseUrl());
+    this.renderer = new IsoRenderer(
+      hostEl,
+      {
+        onEntitySelect: (ent, additive) => this.handleEntitySelect(ent, additive),
+        onBoxSelect: (uids) => this.handleBoxSelect(uids),
+        onTileHover: (tx, ty) => this.handleTileHover(tx, ty),
+        onTileClick: (tx, ty, button, hit, mods) => void this.handleTileClick(tx, ty, button, hit, mods),
+        onEscape: () => this.handleEscape(),
+        onTickFrame: (dtMs) => this.onAnimationFrame(dtMs)
+      },
+      assetsBaseUrl()
+    );
   }
 
   async init(): Promise<void> {
@@ -219,11 +225,9 @@ export class GameController {
 
     let enemySave: SaveFile | null = null;
     if (mode === "pvp") {
-      const res = await fetch(`/api/pvp/match/${encodeURIComponent(save.playerInfo.pid)}`);
-      if (res.ok) enemySave = ((await res.json()) as { save: SaveFile | null }).save;
+      enemySave = await gameApi.fetchPvpMatch(save.playerInfo.pid);
     } else {
-      const res = await fetch(`/api/maps/${mapKey}`);
-      if (res.ok) enemySave = (await res.json()) as SaveFile;
+      enemySave = await gameApi.fetchMap(mapKey);
     }
     if (!enemySave || !enemySave.maps[0]) {
       this.notify(store.locale === "es" ? "No se pudo cargar el mapa" : "Failed to load battle map");
@@ -439,24 +443,8 @@ export class GameController {
 
     const packetId = `pkt_${Date.now()}_${this.packetSeq++}`;
     try {
-      const res = await fetch("/api/commands", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pid: save.playerInfo.pid,
-          packetId,
-          tries: 1,
-          timestamp: Math.floor(Date.now() / 1000),
-          commands
-        })
-      });
-      if (!res.ok) return false;
-      const body = (await res.json()) as {
-        result: string;
-        error?: string;
-        save?: SaveFile;
-        events?: { type: string; name?: string; level?: number }[];
-      };
+      const body = await gameApi.executeCommands(save.playerInfo.pid, packetId, commands);
+      if (!body) return false;
 
       if (body.save) {
         store.setActiveSave(body.save);

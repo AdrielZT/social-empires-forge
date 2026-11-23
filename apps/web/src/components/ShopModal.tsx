@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { getUiStrings } from "@sef/game-data";
 import type { GameItem } from "@sef/shared-types";
 import { useGameStore } from "../store/gameStore.js";
+import { thumbUrl } from "../api/paths.js";
 import { HudIcon, ResourceIcon } from "./GameIcons.js";
 
 const TABS = [
@@ -124,7 +125,7 @@ export function ShopModal(props: { onSelectPlace: (item: GameItem) => void }) {
             >
               <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-lg bg-stone-950/70 border border-amber-500/20">
                 <img
-                  src={`/assets/ui/thumbs/${item.imgName}.jpg`}
+                  src={thumbUrl(item.imgName)}
                   loading="lazy"
                   alt={item.name}
                   onError={(e) => {

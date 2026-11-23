@@ -3,6 +3,7 @@ import type { GameItem, GoalDef, Locale, MagicSpellDef, SaveFile, TerrainSkin } 
 import type { RendererMetrics } from "@sef/engine-render";
 import type { MusicTrackId } from "@sef/engine-audio";
 import type { UnitBehaviorProfile } from "@sef/engine-sim";
+import { gameApi } from "../api/gameApi.js";
 
 export type PlayMode = "village" | "quest" | "survival" | "pvp";
 
@@ -266,78 +267,41 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   },
 
   refreshSavedEmpires: async () => {
-    const res = await fetch("/api/saves");
-    if (res.ok) {
-      const data = (await res.json()) as { players: SavedEmpireSummary[] };
-      set({ savedEmpires: data.players });
-    }
+    const players = await gameApi.listSaves();
+    set({ savedEmpires: players });
   },
 
   bootstrapCatalogs: async () => {
     set({ loading: true, error: null });
     try {
-      const [itemsRes, magicsRes, goalsRes, behaviorsRes, mapsRes, colRes, locEnRes, locEsRes, savesRes] =
-        await Promise.all([
-          fetch("/api/game-data/items"),
-          fetch("/api/game-data/magics"),
-          fetch("/api/game-data/goals"),
-          fetch("/api/game-data/behaviors"),
-          fetch("/api/maps"),
-          fetch("/api/game-data/collections"),
-          fetch("/api/game-data/localization/en"),
-          fetch("/api/game-data/localization/es"),
-          fetch("/api/saves")
-        ]);
-
-      if (!itemsRes.ok) throw new Error(`HTTP ${itemsRes.status} loading items`);
-      const items = (await itemsRes.json()) as GameItem[];
+      const bundle = await gameApi.fetchCatalogBundle();
       const itemsById = new Map<number, GameItem>();
-      for (const it of items) itemsById.set(it.id, it);
+      for (const it of bundle.items) itemsById.set(it.id, it);
 
-      const magics = magicsRes.ok ? ((await magicsRes.json()) as MagicSpellDef[]) : [];
-      const goals = goalsRes.ok ? ((await goalsRes.json()) as GoalDef[]) : [];
-      const behaviorsRaw = behaviorsRes.ok
-        ? ((await behaviorsRes.json()) as Record<string, UnitBehaviorProfile>)
-        : {};
       const behaviorsById = new Map<number, UnitBehaviorProfile>();
-      for (const [k, v] of Object.entries(behaviorsRaw)) behaviorsById.set(Number(k), v);
-
-      const mapsData = mapsRes.ok ? ((await mapsRes.json()) as { maps: MapListEntry[] }) : { maps: [] };
-      const collections = colRes.ok ? ((await colRes.json()) as Record<string, unknown>) : {};
-      const localizationEn = locEnRes.ok ? ((await locEnRes.json()) as Record<string, string>) : {};
-      const localizationEs = locEsRes.ok ? ((await locEsRes.json()) as Record<string, string>) : {};
-      const savesData = savesRes.ok ? ((await savesRes.json()) as { players: SavedEmpireSummary[] }) : { players: [] };
+      for (const [k, v] of Object.entries(bundle.behaviors)) behaviorsById.set(Number(k), v);
 
       set({
-        items,
+        items: bundle.items,
         itemsById,
-        magics,
-        goals,
+        magics: bundle.magics,
+        goals: bundle.goals,
         behaviorsById,
-        availableMaps: mapsData.maps,
-        collections,
-        localizationEn,
-        localizationEs,
-        savedEmpires: savesData.players
+        availableMaps: bundle.maps,
+        collections: bundle.collections,
+        localizationEn: bundle.localizationEn,
+        localizationEs: bundle.localizationEs,
+        savedEmpires: bundle.saves
       });
 
       // Load most recent saved empire or auto-create classic empire on first launch
       let activeSave: SaveFile | null = null;
-      if (savesData.players.length > 0) {
-        const latestPid = savesData.players[0]!.pid;
-        const loadRes = await fetch(`/api/saves/${encodeURIComponent(latestPid)}`);
-        if (loadRes.ok) {
-          activeSave = ((await loadRes.json()) as { save: SaveFile }).save;
-        }
+      if (bundle.saves.length > 0) {
+        activeSave = await gameApi.loadSave(bundle.saves[0]!.pid);
       }
       if (!activeSave) {
-        const createRes = await fetch("/api/saves", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: "Imperio Clásico" })
-        });
-        if (createRes.ok) {
-          activeSave = ((await createRes.json()) as { save: SaveFile }).save;
+        activeSave = await gameApi.createSave("Imperio Clásico");
+        if (activeSave) {
           await get().refreshSavedEmpires();
         }
       }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { SaveFile } from "@sef/shared-types";
 import { SURVIVAL_BIOMES, type GameController } from "../engine/GameController.js";
+import { gameApi } from "../api/gameApi.js";
 import { useGameStore } from "../store/gameStore.js";
 import { HudIcon, ResourceIcon } from "./GameIcons.js";
 
@@ -21,32 +21,24 @@ export function WorldMapModal(props: { controller: GameController | null }) {
 
   useEffect(() => {
     if (tab === "pvp") {
-      void fetch("/api/pvp/ranking")
-        .then((r) => (r.ok ? r.json() : { ranking: [] }))
-        .then((d: { ranking?: typeof ranking }) => setRanking(d.ranking ?? []));
+      void gameApi.fetchPvpRanking().then((rows) => setRanking(rows));
     }
   }, [tab]);
 
   const handleCreateEmpire = async () => {
-    const res = await fetch("/api/saves", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName.trim() || "Nuevo Imperio" })
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { save: SaveFile };
+    const created = await gameApi.createSave(newName.trim() || "Nuevo Imperio");
+    if (created) {
       await refreshSavedEmpires();
-      props.controller?.loadPersistentVillage(data.save);
+      props.controller?.loadPersistentVillage(created);
       setNewName("");
       setActiveModal(null);
     }
   };
 
   const handleLoadEmpire = async (pid: string) => {
-    const res = await fetch(`/api/saves/${encodeURIComponent(pid)}`);
-    if (res.ok) {
-      const data = (await res.json()) as { save: SaveFile };
-      props.controller?.loadPersistentVillage(data.save);
+    const loaded = await gameApi.loadSave(pid);
+    if (loaded) {
+      props.controller?.loadPersistentVillage(loaded);
       setActiveModal(null);
     }
   };
@@ -54,17 +46,16 @@ export function WorldMapModal(props: { controller: GameController | null }) {
   const handleImportSave = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const text = await file.text();
-    const res = await fetch("/api/saves/import", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: text
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { save: SaveFile };
-      await refreshSavedEmpires();
-      props.controller?.loadPersistentVillage(data.save);
-      setActiveModal(null);
+    try {
+      const text = await file.text();
+      const imported = await gameApi.importSave(text);
+      if (imported) {
+        await refreshSavedEmpires();
+        props.controller?.loadPersistentVillage(imported);
+        setActiveModal(null);
+      }
+    } catch {
+      // Invalid save file
     }
   };
 
@@ -254,12 +245,13 @@ export function WorldMapModal(props: { controller: GameController | null }) {
                   <input type="file" accept=".json" onChange={(e) => void handleImportSave(e)} className="hidden" />
                 </label>
                 {activeSave && (
-                  <a
-                    href={`/api/saves/${encodeURIComponent(activeSave.playerInfo.pid)}/export`}
-                    className="rounded-lg bg-amber-600 hover:bg-amber-500 px-3.5 py-1.5 text-xs font-black text-stone-950"
+                  <button
+                    type="button"
+                    onClick={() => gameApi.exportSaveDownload(activeSave)}
+                    className="rounded-lg bg-amber-600 hover:bg-amber-500 px-3.5 py-1.5 text-xs font-black text-stone-950 cursor-pointer"
                   >
                     {locale === "es" ? "Exportar .save.json" : "Export .save.json"}
-                  </a>
+                  </button>
                 )}
               </div>
 
