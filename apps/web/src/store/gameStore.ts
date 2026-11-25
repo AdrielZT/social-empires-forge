@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { GameItem, GoalDef, Locale, MagicSpellDef, SaveFile, TerrainSkin } from "@sef/shared-types";
 import type { RendererMetrics } from "@sef/engine-render";
 import type { MusicTrackId } from "@sef/engine-audio";
-import type { UnitBehaviorProfile } from "@sef/engine-sim";
+import type { StanceMode, UnitBehaviorProfile } from "@sef/engine-sim";
 import { gameApi } from "../api/gameApi.js";
 
 export type PlayMode = "village" | "quest" | "survival" | "pvp";
@@ -41,8 +41,10 @@ export interface SelectedEntitySummary {
   velocity: number;
   orientation: number;
   animState: number;
+  stance: StanceMode;
   limitGauge: number;
   limitMax: number;
+  specialCooldownSecs: number[];
   collectReady: boolean;
   collectAmount: number;
   collectType: string;
@@ -102,15 +104,17 @@ interface GameStoreState {
   musicEnabled: boolean;
   sfxEnabled: boolean;
   showGrid: boolean;
+  boxSelectInVillage: boolean;
   activeModal: ActiveModal;
   systemsTab: "goals" | "market" | "storage" | "graveyard" | "specials";
 
-  // Interactive tools
+  // Interactive tools & QoL control groups (1..9)
   placingItemId: number | null;
   movingEntityUid: number | null;
   castingMagicId: number | null;
   selectedUids: number[];
   selectedSummary: SelectedEntitySummary | null;
+  controlGroups: Record<number, number[]>;
   hoveredTile: { tx: number; ty: number } | null;
 
   // Live HUD state
@@ -131,6 +135,8 @@ interface GameStoreState {
   setMusicEnabled: (enabled: boolean) => void;
   setSfxEnabled: (enabled: boolean) => void;
   setShowGrid: (show: boolean) => void;
+  setBoxSelectInVillage: (enabled: boolean) => void;
+  setControlGroups: (groups: Record<number, number[]>) => void;
   setHoveredTile: (tile: { tx: number; ty: number } | null) => void;
   setMetrics: (metrics: RendererMetrics) => void;
   setSelection: (uids: number[], summary: SelectedEntitySummary | null) => void;
@@ -214,6 +220,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   musicEnabled: true,
   sfxEnabled: true,
   showGrid: false,
+  boxSelectInVillage: false,
   activeModal: null,
   systemsTab: "goals",
 
@@ -222,6 +229,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   castingMagicId: null,
   selectedUids: [],
   selectedSummary: null,
+  controlGroups: {},
   hoveredTile: null,
 
   resources: { coins: 0, wood: 0, stone: 0, food: 0, cash: 0, mana: 25, level: 1, xp: 0, population: 0, maxPopulation: 10 },
@@ -250,6 +258,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   setMusicEnabled: (musicEnabled) => set({ musicEnabled }),
   setSfxEnabled: (sfxEnabled) => set({ sfxEnabled }),
   setShowGrid: (showGrid) => set({ showGrid }),
+  setBoxSelectInVillage: (boxSelectInVillage) => set({ boxSelectInVillage }),
+  setControlGroups: (controlGroups) => set({ controlGroups }),
   setHoveredTile: (hoveredTile) => set({ hoveredTile }),
   setMetrics: (metrics) => set({ metrics }),
   setSelection: (selectedUids, selectedSummary) => set({ selectedUids, selectedSummary }),

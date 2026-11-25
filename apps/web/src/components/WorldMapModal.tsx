@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { SURVIVAL_BIOMES, type GameController } from "../engine/GameController.js";
 import { gameApi } from "../api/gameApi.js";
 import { useGameStore } from "../store/gameStore.js";
+import { ClassicModalFrame } from "./ClassicFrame.js";
 import { HudIcon, ResourceIcon } from "./GameIcons.js";
 
 export function WorldMapModal(props: { controller: GameController | null }) {
@@ -60,48 +61,32 @@ export function WorldMapModal(props: { controller: GameController | null }) {
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/65 p-4">
-      <div className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border-2 border-amber-500/85 bg-gradient-to-b from-[#392412] to-[#1e1209] shadow-2xl text-amber-50">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-amber-500/40 bg-[#2b190b] px-5 py-3">
-          <div className="flex items-center gap-2.5">
-            <HudIcon name="map" className="h-6 w-6" />
-            <h2 className="text-lg font-black text-amber-300">
-              {locale === "es" ? "Mapa Mundial, Campañas y Modos" : "World Map, Campaigns & Modes"}
-            </h2>
-          </div>
+    <ClassicModalFrame
+      title={locale === "es" ? "Mapa Mundial, Campañas y Modos" : "World Map, Campaigns & Modes"}
+      icon={<HudIcon name="map" className="h-6 w-6" />}
+      onClose={() => setActiveModal(null)}
+    >
+      {/* Mode Tabs */}
+      <div className="flex flex-wrap gap-1.5 border-b border-amber-500/30 bg-[#2b180a] px-4 py-2 text-xs font-extrabold">
+        {(
+          [
+            ["quests", locale === "es" ? `Campañas (${questMaps.length})` : `Quests (${questMaps.length})`],
+            ["survival", locale === "es" ? "Supervivencia (5)" : "Survival (5)"],
+            ["pvp", locale === "es" ? "Asalto PvP" : "PvP Assault"],
+            ["expansions", locale === "es" ? `Expansiones (${expansions.length}/25)` : `Expansions (${expansions.length}/25)`],
+            ["empires", locale === "es" ? "Partidas (.save.json)" : "Saves (.save.json)"]
+          ] as const
+        ).map(([id, label]) => (
           <button
+            key={id}
             type="button"
-            onClick={() => setActiveModal(null)}
-            className="rounded-lg bg-red-800/80 hover:bg-red-700 px-3 py-1 text-sm font-black cursor-pointer"
+            onClick={() => setTab(id)}
+            className={`rounded-lg px-3 py-1.5 cursor-pointer ${tab === id ? "sp-btn-gold" : "sp-btn-stone"}`}
           >
-            ✕
+            {label}
           </button>
-        </div>
-
-        {/* Mode Tabs */}
-        <div className="flex flex-wrap gap-1.5 border-b border-amber-500/30 bg-[#241509] px-4 py-2 text-xs font-extrabold">
-          {(
-            [
-              ["quests", locale === "es" ? `Campañas (${questMaps.length})` : `Quests (${questMaps.length})`],
-              ["survival", locale === "es" ? "Supervivencia (5)" : "Survival (5)"],
-              ["pvp", locale === "es" ? "Asalto PvP" : "PvP Assault"],
-              ["expansions", locale === "es" ? `Expansiones (${expansions.length}/25)` : `Expansions (${expansions.length}/25)`],
-              ["empires", locale === "es" ? "Partidas (.save.json)" : "Saves (.save.json)"]
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setTab(id)}
-              className={`rounded-lg px-3 py-1.5 cursor-pointer ${
-                tab === id ? "bg-amber-500 text-stone-950" : "bg-stone-800 text-amber-100 hover:bg-stone-700"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        ))}
+      </div>
 
         {/* Content */}
         <div className="overflow-y-auto p-4">
@@ -293,7 +278,6 @@ export function WorldMapModal(props: { controller: GameController | null }) {
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </ClassicModalFrame>
   );
 }

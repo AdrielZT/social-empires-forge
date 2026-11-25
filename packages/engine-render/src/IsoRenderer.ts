@@ -11,6 +11,8 @@ import {
 import { AtlasLoader, type LoadedSpriteAtlas } from "./AtlasLoader.js";
 import { CameraController } from "./CameraController.js";
 
+const SUBCAT_BUILDING_FARM = 122;
+
 export interface RenderEntityData {
   uid: number;
   itemId: number;
@@ -25,6 +27,10 @@ export interface RenderEntityData {
   height: number;
   orientation: number;
   animState: number; // 0=idle, 1=walk, 2=attack, 3=die, 4=harvest, 5=repair/strike, 6+=special
+  animSeq?: number; // Increments per attack/special to restart clip from frame 0
+  velocity?: number;
+  speed2x?: boolean;
+  subcatFunctional?: number;
   hp: number;
   maxHp: number;
   flying: boolean;
@@ -33,6 +39,7 @@ export interface RenderEntityData {
   team?: "player" | "enemy" | "neutral";
   limitRatio?: number;
   collectReady?: boolean;
+  inCombat?: boolean;
   frozen?: boolean;
   poisoned?: boolean;
   shielded?: boolean;
@@ -80,10 +87,40 @@ export interface ClickModifiers {
   doubleClick: boolean;
 }
 
+export type NumberParticleKind =
+  | "damage_self"
+  | "damage_enemy"
+  | "heal"
+  | "absorbed"
+  | "gold"
+  | "wood"
+  | "stone"
+  | "food"
+  | "xp"
+  | "mana"
+  | "info";
+
+/**
+ * Exact Social Empires 1.4.07 `NumberParticle.as:172-230` color palette.
+ */
+export const NUMBER_PARTICLE_COLORS: Readonly<Record<NumberParticleKind, number>> = {
+  damage_self: 0xff2424, // Constants.COST_DAMAGE_SELF (16711680)
+  damage_enemy: 0xffffff, // Crisp white with heavy dark outline (crit -> gold)
+  heal: 0x22ff55, // Constants.COST_HEAL (65280)
+  absorbed: 0x00afef, // Constants.COST_ABSORBED (44975)
+  gold: 0xffc400, // CostType.GOLD (16761856)
+  wood: 0xe08a3c, // CostType.WOOD (12875048 brightened for dark ground)
+  stone: 0xd6d3d1, // CostType.STONE
+  food: 0xff5c72, // CostType.FOOD
+  xp: 0x38bdf8, // Constants.COST_XP
+  mana: 0x38bdf8, // Constants.COST_MANA (2595484)
+  info: 0xffe484
+};
+
 export interface IsoRendererCallbacks {
   onEntitySelect?: (entity: RenderEntityData | null, additive: boolean) => void;
   onBoxSelect?: (uids: number[]) => void;
-  onTileHover?: (tx: number, ty: number) => void;
+  onTileHover?: (tx: number, ty: number, hoveredEntity: RenderEntityData | null) => void;
   onTileClick?: (
     tx: number,
     ty: number,
@@ -105,14 +142,20 @@ interface EntityVisual {
   atlas: LoadedSpriteAtlas | null;
   loadingAtlas: boolean;
   animElapsed: number;
+  lastAnimState: number;
+  lastAnimSeq: number;
   lastFrameKey: string;
   lastOverlaySig: string;
+  spriteTopOffset: number;
 }
 
 interface FloatingTextItem {
   text: Text;
   vx: number;
   vy: number;
+  gravity: number;
+  baseScale: number;
+  crit: boolean;
   lifeMs: number;
   maxLifeMs: number;
 }
@@ -127,12 +170,48 @@ interface SpellRingEffect {
   maxLifeMs: number;
 }
 
+/**
+ * Exact `IsoUnit.directionFrame` (`IsoUnit.as:401-404`):
+ * orientations 1..5 map directly to 1..5; mirrored orientations 6..8 map to 2..4.
+ */
 export function directionFrame(orientation: number): number {
   return orientation > 5 ? orientation - 4 : Math.max(1, Math.min(5, orientation));
 }
 
+/**
+ * Exact `IsoUnit.directionScaleX` (`IsoUnit.as:406-409`):
+ * orientations 6..8 are horizontally mirrored (`-1`).
+ */
 export function directionScaleX(orientation: number): 1 | -1 {
   return orientation > 5 ? -1 : 1;
+}
+
+/**
+ * Computes frame index for a sprite animation respecting Social Empires 1.4.07 rules:
+ * - Dying (`animState === 3`) plays once and holds final frame.
+ * - Attack/special plays cleanly from frame 0 per `animSeq`.
+ * - Walking scales gently with unit `velocity` and `speed2x`.
+ */
+export function computeAnimationFrameIndex(
+  animState: number,
+  frameCount: number,
+  animElapsedSec: number,
+  fps: number,
+  velocity = 3,
+  speed2x = false
+): number {
+  if (frameCount <= 1) return 0;
+  let rate = fps;
+  if (animState === 1) {
+    const velRatio = Math.max(0.75, Math.min(2.1, (velocity || 3) / 3.0));
+    rate = fps * velRatio * (speed2x ? 1.75 : 1.0);
+  }
+  const rawIdx = Math.max(0, Math.floor(animElapsedSec * rate));
+  if (animState === 3 || animState === 2 || animState >= 6) {
+    // One-shot animations (die, single attack swing, special attack) hold last frame cleanly
+    return Math.min(frameCount - 1, rawIdx);
+  }
+  return rawIdx % frameCount;
 }
 
 export class IsoRenderer {
@@ -163,7 +242,9 @@ export class IsoRenderer {
   private ownedExpansions = new Set<number>([13]);
   private currentBiome: TerrainSkin = "terreno";
   private showGrid = false;
+  private boxSelectDefault = false;
   private selectedUids = new Set<number>();
+  private hoveredEntityUid: number | null = null;
   private hoveredTile: { tx: number; ty: number } | null = null;
   private placementPreview: PlacementPreview | null = null;
   private spellPreview: SpellPreview | null = null;
@@ -171,6 +252,7 @@ export class IsoRenderer {
 
   // Input state
   private isDragging = false;
+  private dragButton = 0;
   private isBoxSelecting = false;
   private dragMoved = false;
   private downClientX = 0;
@@ -182,6 +264,9 @@ export class IsoRenderer {
   private lastPointerX = 0;
   private lastPointerY = 0;
   private readonly keysPressed = new Set<string>();
+  private panVelX = 0;
+  private panVelY = 0;
+  private hoverPickThrottle = 0;
 
   // Performance telemetry (rolling 90-frame ring buffer)
   private readonly frameTimes: number[] = [];
@@ -257,6 +342,20 @@ export class IsoRenderer {
     app.ticker.add(() => this.onRenderFrame());
   }
 
+  /**
+   * Controls whether left-click drag draws a troop selection marquee (true, default in Battle)
+   * or pans the camera (false, default in Village). Right-drag & middle-drag always pan.
+   */
+  setBoxSelectDefault(enabled: boolean): void {
+    this.boxSelectDefault = enabled;
+  }
+
+  setCursorStyle(cursorCss: string): void {
+    if (this.app?.canvas) {
+      this.app.canvas.style.cursor = cursorCss;
+    }
+  }
+
   setRenderAlpha(alpha: number): void {
     this.renderAlpha = Math.max(0, Math.min(1, alpha));
   }
@@ -286,13 +385,57 @@ export class IsoRenderer {
     if (this.hoveredTile) this.drawHoverOverlay(this.hoveredTile.tx, this.hoveredTile.ty);
   }
 
+  /**
+   * Spawns a floating combat/resource number faithful to `core/NumberParticle.as`
+   * (30 frames = 1.0s lifespan, upward float with slight gravity, 1.3x crit scale,
+   * solid alpha for first 500ms then linear fade).
+   */
+  spawnNumberParticle(
+    tx: number,
+    ty: number,
+    kind: NumberParticleKind,
+    label: string,
+    crit = false
+  ): void {
+    if (this.destroyed || this.floatingTexts.length > 72) return;
+    const pos = tileToScreen(tx, ty);
+    const fillCol = crit && kind === "damage_enemy" ? 0xffe066 : NUMBER_PARTICLE_COLORS[kind];
+    const baseScale = crit ? 1.32 : 1.05;
+
+    const txt = new Text({
+      text: label,
+      style: {
+        fontFamily: "Nunito, Arial Rounded MT Bold, Trebuchet MS, sans-serif",
+        fontSize: crit ? 20 : 17,
+        fontWeight: "900",
+        fill: fillCol,
+        stroke: { color: 0x160a03, width: crit ? 5 : 4 }
+      }
+    });
+    txt.anchor.set(0.5, 1.0);
+    txt.x = pos.x + (Math.random() * 22 - 11);
+    txt.y = pos.y - 46;
+    txt.scale.set(baseScale * (crit ? 1.25 : 1.0));
+    this.vfxLayer.addChild(txt);
+    this.floatingTexts.push({
+      text: txt,
+      vx: (Math.random() - 0.5) * 8,
+      vy: -62, // 2 px/frame * 30 FPS (`NumberParticle.as:44`)
+      gravity: 12,
+      baseScale,
+      crit,
+      lifeMs: 0,
+      maxLifeMs: 1000 // 30 frames @ 30 FPS (`NumberParticle.as:13`)
+    });
+  }
+
   spawnFloatingText(tx: number, ty: number, label: string, color = 0xffe484): void {
-    if (this.destroyed || this.floatingTexts.length > 60) return;
+    if (this.destroyed || this.floatingTexts.length > 72) return;
     const pos = tileToScreen(tx, ty);
     const txt = new Text({
       text: label,
       style: {
-        fontFamily: "Nunito, Arial Rounded MT Bold, sans-serif",
+        fontFamily: "Nunito, Arial Rounded MT Bold, Trebuchet MS, sans-serif",
         fontSize: 16,
         fontWeight: "900",
         fill: color,
@@ -301,9 +444,18 @@ export class IsoRenderer {
     });
     txt.anchor.set(0.5, 1.0);
     txt.x = pos.x + (Math.random() * 24 - 12);
-    txt.y = pos.y - 42;
+    txt.y = pos.y - 44;
     this.vfxLayer.addChild(txt);
-    this.floatingTexts.push({ text: txt, vx: 0, vy: -48, lifeMs: 0, maxLifeMs: 1100 });
+    this.floatingTexts.push({
+      text: txt,
+      vx: 0,
+      vy: -56,
+      gravity: 10,
+      baseScale: 1.0,
+      crit: false,
+      lifeMs: 0,
+      maxLifeMs: 1050
+    });
   }
 
   spawnSpellBurst(tx: number, ty: number, radiusTiles: number, color = 0xff7b29): void {
@@ -453,6 +605,7 @@ export class IsoRenderer {
     }
     this.visuals.clear();
     this.selectedUids.clear();
+    this.hoveredEntityUid = null;
     this.projectiles = [];
     if (this.hadProjectiles) {
       this.projectileLayer.clear();
@@ -506,16 +659,21 @@ export class IsoRenderer {
   }
 
   setSelectedEntities(uids: readonly number[]): void {
-    for (const prevId of this.selectedUids) {
-      const prev = this.visuals.get(prevId);
-      if (prev) prev.selectionRing.visible = false;
-    }
+    const prevSet = this.selectedUids;
     this.selectedUids = new Set(uids);
+    for (const prevId of prevSet) {
+      const prev = this.visuals.get(prevId);
+      if (prev) {
+        prev.selectionRing.visible = this.selectedUids.has(prevId);
+        this.updateStatusOverlays(prev);
+      }
+    }
     for (const uid of this.selectedUids) {
       const vis = this.visuals.get(uid);
       if (vis) {
         this.drawSelectionRing(vis);
         vis.selectionRing.visible = true;
+        this.updateStatusOverlays(vis);
       }
     }
   }
@@ -548,9 +706,12 @@ export class IsoRenderer {
       collectBadge,
       atlas: this.atlasLoader.getIfLoaded(ent.imgName),
       loadingAtlas: false,
-      animElapsed: Math.random() * 2,
+      animElapsed: ent.animState === 0 ? Math.random() * 1.5 : 0,
+      lastAnimState: ent.animState,
+      lastAnimSeq: ent.animSeq ?? 0,
       lastFrameKey: "",
-      lastOverlaySig: ""
+      lastOverlaySig: "",
+      spriteTopOffset: ent.type === "b" ? Math.max(66, ent.height * 36) : 70
     };
 
     this.visuals.set(ent.uid, vis);
@@ -560,26 +721,47 @@ export class IsoRenderer {
     if (vis.atlas) this.updateSpriteAnimation(vis, 0);
   }
 
+  /**
+   * Exact 1:1 isometric placement & z-ordering (`Utils.TileToPixel`, `Utils.assignZIndex`, `IsoElement.setGraphic`):
+   * - Units (`type === "u"`) stand centered at the diamond midpoint `(pos.x, pos.y)` so feet & selection ring align 1:1.
+   * - Buildings (`type === "b"`) anchor their south footprint corner at `(pos.x, pos.y + 27)`.
+   * - Farms (`SUBCATFUNC_BUILDING_FARM = 122`) subtract `20000` from zIndex so units walk cleanly on top.
+   */
   private positionEntityVisual(vis: EntityVisual, alpha: number): void {
-    const { tx, ty, prevTx, prevTy, width, height, type } = vis.data;
+    const { tx, ty, prevTx, prevTy, width, height, type, subcatFunctional } = vis.data;
     const itx = prevTx !== undefined ? prevTx + (tx - prevTx) * alpha : tx;
     const ity = prevTy !== undefined ? prevTy + (ty - prevTy) * alpha : ty;
     const pos = tileToScreen(itx, ity);
     const nextX = pos.x;
-    const nextY = type === "u" ? pos.y - ISO_TILE_HEIGHT * 0.5 : pos.y + ISO_TILE_HEIGHT * 0.5;
+    const nextY = type === "u" ? pos.y : pos.y + ISO_TILE_HEIGHT * 0.5;
     if (vis.container.x !== nextX) vis.container.x = nextX;
     if (vis.container.y !== nextY) vis.container.y = nextY;
 
     const centerTx = itx - (width - 1) * 0.5;
     const centerTy = ity - (height - 1) * 0.5;
-    const nextZ = (centerTx + centerTy) * 1000 + (type === "u" ? 120 : 0) + (centerTx - centerTy) * 0.01;
+    const farmOffset = type === "b" && subcatFunctional === SUBCAT_BUILDING_FARM ? -20000 : 0;
+    const nextZ =
+      farmOffset +
+      (centerTx + centerTy) * 1000 +
+      (type === "u" ? 140 : 0) +
+      (centerTx - centerTy) * 0.01;
     if (vis.container.zIndex !== nextZ) vis.container.zIndex = nextZ;
   }
 
+  /**
+   * Classic Social Empires `BarraVidaMC` / `BarraVidaEnemyMC` & `LimitBarMC` overlays
+   * (`IsoFightingElement.as:162-182, 826-841` & `IsoInteractiveElement.as:321-340`):
+   * - Shown only when damaged, selected, hovered, or actively in combat.
+   * - Positioned dynamically at `-spriteTopOffset - 6` above the real sprite crown.
+   */
   private updateStatusOverlays(vis: EntityVisual): void {
     const d = vis.data;
     const isSel = this.selectedUids.has(d.uid);
-    const sig = `${Math.round(d.hp)}/${d.maxHp}|${isSel ? 1 : 0}|${d.team}|${d.collectReady ? 1 : 0}|${d.frozen ? 1 : 0}|${d.poisoned ? 1 : 0}|${d.shielded ? 1 : 0}|${Math.round((d.limitRatio ?? 0) * 20)}`;
+    const isHov = this.hoveredEntityUid === d.uid;
+    const showHp = (d.hp < d.maxHp || isSel || isHov || Boolean(d.inCombat)) && d.maxHp > 1;
+    const yTop = Math.round(vis.spriteTopOffset);
+
+    const sig = `${Math.round(d.hp)}/${d.maxHp}|${showHp ? 1 : 0}|${isSel ? 1 : 0}|${d.team}|${d.collectReady ? 1 : 0}|${d.frozen ? 1 : 0}|${d.poisoned ? 1 : 0}|${d.shielded ? 1 : 0}|${Math.round((d.limitRatio ?? 0) * 20)}|${yTop}`;
     if (vis.lastOverlaySig === sig) return;
     vis.lastOverlaySig = sig;
 
@@ -588,20 +770,47 @@ export class IsoRenderer {
     else if (d.shielded) vis.sprite.tint = 0xfef08a;
     else vis.sprite.tint = 0xffffff;
 
-    const showHp = d.hp < d.maxHp || d.team === "enemy" || isSel;
-    vis.hpBar.visible = showHp && d.maxHp > 1;
+    vis.hpBar.visible = showHp;
     if (vis.hpBar.visible) {
       const g = vis.hpBar;
       g.clear();
-      const bw = d.type === "b" ? 54 : 36;
-      const yOff = d.type === "b" ? -Math.max(70, d.height * 34) : -74;
+      const bw = d.type === "b" ? Math.min(82, Math.max(54, d.width * 24)) : d.limitRatio !== undefined && d.maxHp >= 500 ? 48 : 38;
+      const bh = 7;
+      const yOff = -yTop - 8;
       const ratio = Math.max(0, Math.min(1, d.hp / Math.max(1, d.maxHp)));
-      const fillCol = d.team === "enemy" ? 0xef4444 : ratio > 0.45 ? 0x22c55e : 0xf59e0b;
-      g.rect(-bw / 2, yOff, bw, 5).fill({ color: 0x111827, alpha: 0.85 });
-      g.rect(-bw / 2 + 1, yOff + 1, Math.max(0, (bw - 2) * ratio), 3).fill({ color: fillCol });
+
+      // Beveled Socialpoint dark-bronze frame
+      g.roundRect(-bw / 2 - 1, yOff - 1, bw + 2, bh + 2, 2)
+        .fill({ color: 0x1c0f06, alpha: 0.92 })
+        .stroke({ width: 1, color: d.team === "enemy" ? 0x7f1d1d : 0xd4a24c, alpha: 0.9 });
+
+      // Depleted red damage track (`barraRoja`)
+      g.rect(-bw / 2 + 1, yOff + 1, bw - 2, bh - 2).fill({ color: 0x5c1111 });
+
+      // Remaining health fill (`BarraVidaMC` green vs `BarraVidaEnemyMC` crimson)
+      const fillW = Math.max(0, (bw - 2) * ratio);
+      if (fillW > 0) {
+        const mainCol =
+          d.team === "enemy"
+            ? 0xef4444
+            : ratio > 0.45
+              ? 0x22c55e
+              : ratio > 0.22
+                ? 0xf59e0b
+                : 0xef4444;
+        const hiCol = d.team === "enemy" ? 0xfca5a5 : ratio > 0.45 ? 0x86efac : 0xfde68a;
+        g.rect(-bw / 2 + 1, yOff + 1, fillW, bh - 2).fill({ color: mainCol });
+        g.rect(-bw / 2 + 1, yOff + 1, fillW, 1.5).fill({ color: hiCol, alpha: 0.65 });
+      }
+
+      // Limit Gauge bar (`LimitBarMC`) directly underneath for Limit units
       if (d.limitRatio && d.limitRatio > 0) {
-        g.rect(-bw / 2, yOff + 6, bw, 3).fill({ color: 0x0f172a, alpha: 0.85 });
-        g.rect(-bw / 2, yOff + 6, bw * Math.min(1, d.limitRatio), 3).fill({ color: 0x38bdf8 });
+        const clamped = Math.min(1, d.limitRatio);
+        const ready = clamped >= 0.999;
+        g.rect(-bw / 2, yOff + bh + 2, bw, 4).fill({ color: 0x0f172a, alpha: 0.9 });
+        g.rect(-bw / 2 + 1, yOff + bh + 3, (bw - 2) * clamped, 2).fill({
+          color: ready ? 0xfacc15 : 0x38bdf8
+        });
       }
     }
 
@@ -609,8 +818,11 @@ export class IsoRenderer {
     if (vis.collectBadge.visible) {
       const g = vis.collectBadge;
       g.clear();
-      const yOff = -Math.max(84, d.height * 38);
-      g.circle(0, yOff, 11).fill({ color: 0xfacc15 }).stroke({ width: 2.5, color: 0x78350f });
+      const yOff = -yTop - 18;
+      g.circle(0, yOff, 11)
+        .fill({ color: 0xfacc15 })
+        .stroke({ width: 2.5, color: 0x78350f });
+      g.circle(-2, yOff - 2, 3.5).fill({ color: 0xfef9c3, alpha: 0.75 });
     }
   }
 
@@ -620,8 +832,9 @@ export class IsoRenderer {
     const { width, height, type, team } = vis.data;
     const color = team === "enemy" ? 0xf87171 : 0x4ade80;
     if (type === "u") {
-      g.ellipse(0, 0, 26, 13).stroke({ width: 2.5, color, alpha: 0.95 });
-      g.ellipse(0, 0, 26, 13).fill({ color, alpha: 0.18 });
+      g.ellipse(0, 0, 27, 13.5).fill({ color, alpha: 0.16 });
+      g.ellipse(0, 0, 27, 13.5).stroke({ width: 2.5, color, alpha: 0.95 });
+      g.ellipse(0, 0, 22, 10.5).stroke({ width: 1, color: 0xffffff, alpha: 0.45 });
     } else {
       const halfW = width * ISO_TILE_WIDTH * 0.5;
       const halfH = height * ISO_TILE_HEIGHT * 0.5;
@@ -643,27 +856,38 @@ export class IsoRenderer {
     this.frameTimes.push(dtMs);
     if (this.frameTimes.length > 90) this.frameTimes.shift();
 
-    // Let simulation fixed-step clock advance before rendering interpolated positions
+    // Advance fixed-step simulation before rendering interpolated positions
     this.callbacks.onTickFrame?.(dtMs);
 
-    // Keyboard WASD/arrow camera panning
-    const panSpeed = (620 * dtMs) / 1000;
-    let panX = 0;
-    let panY = 0;
-    if (this.keysPressed.has("KeyW") || this.keysPressed.has("ArrowUp")) panY += panSpeed;
-    if (this.keysPressed.has("KeyS") || this.keysPressed.has("ArrowDown")) panY -= panSpeed;
-    if (this.keysPressed.has("KeyA") || this.keysPressed.has("ArrowLeft")) panX += panSpeed;
-    if (this.keysPressed.has("KeyD") || this.keysPressed.has("ArrowRight")) panX -= panSpeed;
-    if (panX !== 0 || panY !== 0) {
-      this.camera.panByScreenDelta(panX, panY);
+    // Smooth WASD/Arrow camera panning with acceleration/damping
+    const dtSec = Math.min(0.1, dtMs / 1000);
+    let inX = 0;
+    let inY = 0;
+    if (this.keysPressed.has("KeyW") || this.keysPressed.has("ArrowUp")) inY += 1;
+    if (this.keysPressed.has("KeyS") || this.keysPressed.has("ArrowDown")) inY -= 1;
+    if (this.keysPressed.has("KeyA") || this.keysPressed.has("ArrowLeft")) inX += 1;
+    if (this.keysPressed.has("KeyD") || this.keysPressed.has("ArrowRight")) inX -= 1;
+
+    const maxPanSpeed = 680;
+    const damp = 1 - Math.exp(-14 * dtSec);
+    this.panVelX += (inX * maxPanSpeed - this.panVelX) * damp;
+    this.panVelY += (inY * maxPanSpeed - this.panVelY) * damp;
+    if (Math.abs(this.panVelX) > 2 || Math.abs(this.panVelY) > 2) {
+      this.camera.panByScreenDelta(this.panVelX * dtSec, this.panVelY * dtSec);
+    } else {
+      this.panVelX = 0;
+      this.panVelY = 0;
     }
+
+    // Advance smooth zoom / pan-to-target camera transitions
+    this.camera.update(dtMs);
 
     const camTf = this.camera.getWorldTransform();
     this.worldRoot.x = camTf.x;
     this.worldRoot.y = camTf.y;
     this.worldRoot.scale.set(camTf.scale);
 
-    // Frustum-cull the 5x5 terrain expansion sprites (each 2160x1080) so off-screen islands incur zero fillrate
+    // Frustum-cull the 5x5 terrain expansion sprites
     const terrainBounds = this.camera.getVisibleWorldBounds(48);
     const halfTerrainW = EXPANSION_SIZE_TILES * ISO_TILE_WIDTH * 0.5;
     const fullTerrainH = EXPANSION_SIZE_TILES * ISO_TILE_HEIGHT;
@@ -677,7 +901,6 @@ export class IsoRenderer {
     }
 
     const bounds = this.camera.getVisibleWorldBounds(360);
-    const dtSec = dtMs / 1000;
     let visible = 0;
 
     for (const vis of this.visuals.values()) {
@@ -756,8 +979,18 @@ export class IsoRenderer {
     for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
       const ft = this.floatingTexts[i]!;
       ft.lifeMs += dtMs;
+      ft.text.x += ft.vx * dtSec;
       ft.text.y += ft.vy * dtSec;
-      ft.text.alpha = Math.max(0, 1 - ft.lifeMs / ft.maxLifeMs);
+      ft.vy += ft.gravity * dtSec;
+      // Canonical `NumberParticle.as:255`: alpha = min(1, remaining * 2 / maxLife)
+      const remaining = Math.max(0, ft.maxLifeMs - ft.lifeMs);
+      ft.text.alpha = Math.min(1, (remaining * 2) / ft.maxLifeMs);
+      if (ft.crit && ft.lifeMs < 160) {
+        const pop = 1 + 0.25 * (1 - ft.lifeMs / 160);
+        ft.text.scale.set(ft.baseScale * pop);
+      } else if (ft.crit) {
+        ft.text.scale.set(ft.baseScale);
+      }
       if (ft.lifeMs >= ft.maxLifeMs) {
         ft.text.parent?.removeChild(ft.text);
         ft.text.destroy();
@@ -787,7 +1020,15 @@ export class IsoRenderer {
   private updateSpriteAnimation(vis: EntityVisual, dtSec: number): void {
     const atlas = vis.atlas;
     if (!atlas) return;
-    const { type, orientation, animState, scale, enlarged, hp, maxHp } = vis.data;
+    const { type, orientation, animState, animSeq, velocity, speed2x, scale, enlarged, hp, maxHp, width } = vis.data;
+
+    // Reset animation elapsed timer on state transition or new attack swing (`IsoUnit.as:2744-2765`)
+    const curSeq = animSeq ?? 0;
+    if (vis.lastAnimState !== animState || vis.lastAnimSeq !== curSeq) {
+      vis.lastAnimState = animState;
+      vis.lastAnimSeq = curSeq;
+      vis.animElapsed = 0;
+    }
 
     let rootFrameNum = 1;
     let flipX: 1 | -1 = 1;
@@ -810,9 +1051,7 @@ export class IsoRenderer {
 
     let frameKey: string;
     if (type === "b") {
-      // In Social Empires Flash SWFs, building/tree/farm sub-timelines store damage,
-      // chop, or growth states (NOT looping animations). Hold frame 0 when intact so
-      // trees, mines, farms, and structures never flicker at 24 FPS!
+      // Buildings/trees/farms store damage/growth states on sub-timelines (never loop at 24 FPS)
       if (anim.frames.length > 1 && hp < maxHp && maxHp > 0) {
         const dmgRatio = Math.max(0, Math.min(0.99, 1 - hp / maxHp));
         const idx = Math.min(anim.frames.length - 1, Math.floor(dmgRatio * anim.frames.length));
@@ -824,7 +1063,14 @@ export class IsoRenderer {
       frameKey = anim.frames[0]!;
     } else {
       vis.animElapsed += dtSec;
-      const frameIdx = Math.floor(vis.animElapsed * atlas.meta.fps) % anim.frames.length;
+      const frameIdx = computeAnimationFrameIndex(
+        animState,
+        anim.frames.length,
+        vis.animElapsed,
+        atlas.meta.fps,
+        velocity,
+        speed2x
+      );
       frameKey = anim.frames[frameIdx]!;
     }
 
@@ -840,18 +1086,36 @@ export class IsoRenderer {
     sp.texture = frameEntry.texture;
 
     if (type === "u") {
-      sp.anchor.set(
-        frameEntry.rect.w > 0 ? frameEntry.rect.anchorX / frameEntry.rect.w : 0.5,
-        frameEntry.rect.h > 0 ? frameEntry.rect.anchorY / frameEntry.rect.h : 0.85
-      );
+      const ax = frameEntry.rect.w > 0 ? frameEntry.rect.anchorX / frameEntry.rect.w : 0.5;
+      const ay = frameEntry.rect.h > 0 ? frameEntry.rect.anchorY / frameEntry.rect.h : 0.88;
+      sp.anchor.set(ax, ay);
       sp.x = 0;
       sp.y = 0;
       sp.scale.set(flipX * effScale, effScale);
+      const topH = Math.max(44, Math.min(220, frameEntry.rect.h * ay * effScale));
+      if (Math.abs(vis.spriteTopOffset - topH) > 4) {
+        vis.spriteTopOffset = topH;
+        this.updateStatusOverlays(vis);
+      }
     } else {
-      sp.anchor.set(0.5, 1.0);
+      // Compensate asymmetric horizontal trim when `extract_sprites.py` preserved negative `anchorX`
+      let bx = 0.5;
+      if (frameEntry.rect.w > 0 && frameEntry.rect.anchorX < 0) {
+        const trimLeft = -frameEntry.rect.anchorX;
+        const expectedFootW = width * ISO_TILE_WIDTH;
+        if (frameEntry.rect.w + trimLeft <= expectedFootW + 24) {
+          bx = Math.max(0.3, Math.min(0.7, (expectedFootW * 0.5 - trimLeft) / frameEntry.rect.w));
+        }
+      }
+      sp.anchor.set(bx, 1.0);
       sp.x = 0;
       sp.y = 0;
       sp.scale.set(effScale, effScale);
+      const topH = Math.max(52, Math.min(240, frameEntry.rect.h * effScale));
+      if (Math.abs(vis.spriteTopOffset - topH) > 4) {
+        vis.spriteTopOffset = topH;
+        this.updateStatusOverlays(vis);
+      }
     }
   }
 
@@ -861,12 +1125,18 @@ export class IsoRenderer {
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
 
-      // Always reset drag state for EVERY mouse button (including right-click!)
       this.dragMoved = false;
       this.downClientX = e.clientX;
       this.downClientY = e.clientY;
+      this.dragButton = e.button;
 
-      if (e.button === 0 && e.shiftKey) {
+      const wantBoxSelect =
+        e.button === 0 &&
+        !this.placementPreview &&
+        !this.spellPreview &&
+        (e.shiftKey || this.boxSelectDefault);
+
+      if (wantBoxSelect) {
         this.isBoxSelecting = true;
         this.boxStartX = sx;
         this.boxStartY = sy;
@@ -874,7 +1144,7 @@ export class IsoRenderer {
         return;
       }
 
-      if (e.button === 0 || e.button === 1) {
+      if (e.button === 0 || e.button === 1 || e.button === 2) {
         this.isDragging = true;
         this.lastPointerX = e.clientX;
         this.lastPointerY = e.clientY;
@@ -888,15 +1158,19 @@ export class IsoRenderer {
       const sy = e.clientY - rect.top;
 
       if (this.isBoxSelecting) {
-        this.selectBoxLayer.clear();
-        const x = Math.min(this.boxStartX, sx);
-        const y = Math.min(this.boxStartY, sy);
-        const w = Math.abs(sx - this.boxStartX);
-        const h = Math.abs(sy - this.boxStartY);
-        this.selectBoxLayer
-          .rect(x, y, w, h)
-          .fill({ color: 0x4ade80, alpha: 0.16 })
-          .stroke({ width: 2, color: 0x4ade80, alpha: 0.9 });
+        const totalDist = Math.hypot(e.clientX - this.downClientX, e.clientY - this.downClientY);
+        if (totalDist > 7) {
+          this.dragMoved = true;
+          this.selectBoxLayer.clear();
+          const x = Math.min(this.boxStartX, sx);
+          const y = Math.min(this.boxStartY, sy);
+          const w = Math.abs(sx - this.boxStartX);
+          const h = Math.abs(sy - this.boxStartY);
+          this.selectBoxLayer
+            .rect(x, y, w, h)
+            .fill({ color: 0x4ade80, alpha: 0.16 })
+            .stroke({ width: 2, color: 0x4ade80, alpha: 0.92 });
+        }
         return;
       }
 
@@ -919,10 +1193,29 @@ export class IsoRenderer {
       const t = screenToTile(world.x, world.y);
       const tx = Math.floor(t.tx);
       const ty = Math.floor(t.ty);
-      if (!this.hoveredTile || this.hoveredTile.tx !== tx || this.hoveredTile.ty !== ty) {
-        this.hoveredTile = { tx, ty };
-        this.drawHoverOverlay(tx, ty);
-        this.callbacks.onTileHover?.(tx, ty);
+      const nowMs = performance.now();
+      const tileChanged = !this.hoveredTile || this.hoveredTile.tx !== tx || this.hoveredTile.ty !== ty;
+
+      if (tileChanged || nowMs - this.hoverPickThrottle > 45) {
+        this.hoverPickThrottle = nowMs;
+        const hit = this.pickEntityAtWorld(world.x, world.y);
+        const prevHov = this.hoveredEntityUid;
+        this.hoveredEntityUid = hit ? hit.uid : null;
+        if (prevHov !== this.hoveredEntityUid) {
+          if (prevHov !== null) {
+            const pv = this.visuals.get(prevHov);
+            if (pv) this.updateStatusOverlays(pv);
+          }
+          if (this.hoveredEntityUid !== null) {
+            const nv = this.visuals.get(this.hoveredEntityUid);
+            if (nv) this.updateStatusOverlays(nv);
+          }
+        }
+        if (tileChanged) {
+          this.hoveredTile = { tx, ty };
+          this.drawHoverOverlay(tx, ty);
+        }
+        this.callbacks.onTileHover?.(tx, ty, hit);
       }
     };
 
@@ -935,21 +1228,24 @@ export class IsoRenderer {
         this.isBoxSelecting = false;
         this.selectBoxLayer.clear();
         if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
-        const x0 = Math.min(this.boxStartX, sx);
-        const y0 = Math.min(this.boxStartY, sy);
-        const x1 = Math.max(this.boxStartX, sx);
-        const y1 = Math.max(this.boxStartY, sy);
-        const uids: number[] = [];
-        for (const vis of this.visuals.values()) {
-          if (vis.data.type !== "u" || vis.data.team !== "player") continue;
-          const sp = this.camera.worldToScreen(vis.container.x, vis.container.y - 24);
-          if (sp.x >= x0 && sp.x <= x1 && sp.y >= y0 && sp.y <= y1) {
-            uids.push(vis.data.uid);
+        if (this.dragMoved) {
+          const x0 = Math.min(this.boxStartX, sx);
+          const y0 = Math.min(this.boxStartY, sy);
+          const x1 = Math.max(this.boxStartX, sx);
+          const y1 = Math.max(this.boxStartY, sy);
+          const uids: number[] = [];
+          for (const vis of this.visuals.values()) {
+            if (vis.data.type !== "u" || vis.data.team !== "player") continue;
+            const sp = this.camera.worldToScreen(vis.container.x, vis.container.y - 24);
+            if (sp.x >= x0 && sp.x <= x1 && sp.y >= y0 && sp.y <= y1) {
+              uids.push(vis.data.uid);
+            }
           }
+          this.setSelectedEntities(uids);
+          this.callbacks.onBoxSelect?.(uids);
+          return;
         }
-        this.setSelectedEntities(uids);
-        this.callbacks.onBoxSelect?.(uids);
-        return;
+        // Short click without drag falls through to normal click handling below!
       }
 
       if (this.isDragging) {
@@ -959,7 +1255,7 @@ export class IsoRenderer {
         }
       }
 
-      const isClick = e.button === 2 || !this.dragMoved;
+      const isClick = !this.dragMoved && (e.button === 0 || e.button === 2);
       if (isClick) {
         const world = this.camera.screenToWorld(sx, sy);
         const hit = this.pickEntityAtWorld(world.x, world.y);
@@ -982,6 +1278,7 @@ export class IsoRenderer {
           doubleClick
         });
       }
+      this.dragButton = 0;
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -989,21 +1286,29 @@ export class IsoRenderer {
       const rect = canvas.getBoundingClientRect();
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
-      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-      this.camera.zoomAtScreenPoint(factor, sx, sy);
+      const factor = e.deltaY < 0 ? 1.14 : 1 / 1.14;
+      this.camera.smoothZoomAtScreenPoint(factor, sx, sy);
     };
 
     const onContextMenu = (e: MouseEvent) => e.preventDefault();
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) {
+        return;
+      }
       if (e.code === "Escape") {
         this.callbacks.onEscape?.();
         return;
       }
-      this.keysPressed.add(e.code);
+      // Don't pan with WASD if Ctrl/Meta is held (e.g., Ctrl+S / Ctrl+A)
+      if (!e.ctrlKey && !e.metaKey) {
+        this.keysPressed.add(e.code);
+      }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       this.keysPressed.delete(e.code);
+    };
+    const onBlur = () => {
+      this.keysPressed.clear();
     };
 
     canvas.addEventListener("pointerdown", onPointerDown);
@@ -1013,6 +1318,7 @@ export class IsoRenderer {
     canvas.addEventListener("contextmenu", onContextMenu);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
   }
 
   private drawHoverOverlay(tx: number, ty: number): void {
@@ -1079,7 +1385,6 @@ export class IsoRenderer {
       if (sp.texture === Texture.EMPTY) continue;
 
       if (vis.data.type === "u") {
-        // Flip-safe generous hitbox so villagers, knights, archers, and trolls are always easy to click
         const rawW = Math.max(58, Math.abs(sp.width) + 16);
         const rawH = Math.max(78, Math.abs(sp.height) + 16);
         const effAnchorX = sp.scale.x < 0 ? 1 - sp.anchor.x : sp.anchor.x;
@@ -1089,7 +1394,6 @@ export class IsoRenderer {
           unitHits.push(vis);
         }
       } else {
-        // Trim outer 12% horizontal transparent margins on large structures so units nearby stay clickable
         const fullW = Math.abs(sp.width);
         const fullH = Math.abs(sp.height);
         const padX = fullW > 140 ? fullW * 0.12 : 0;
@@ -1103,7 +1407,6 @@ export class IsoRenderer {
       }
     }
 
-    // Units always take click priority over overlapping building sprite rectangles
     if (unitHits.length > 0) {
       unitHits.sort((a, b) => b.container.zIndex - a.container.zIndex);
       return unitHits[0]!.data;

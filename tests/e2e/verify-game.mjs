@@ -66,17 +66,43 @@ async function main() {
     // 1. Screenshot: Classic Village in Spanish
     await page.screenshot({ path: path.join(OUT_DIR, "01_village_es.png") });
 
-    // 2. Open Shop Modal & screenshot
+    // Verify Village drag-mode toggle & Army + Control Group QoL
+    const dragBtn = page.locator('[data-testid="btn-drag-mode"]');
+    await dragBtn.click();
+    await page.waitForTimeout(150);
+    await dragBtn.click();
+
+    await page.click('[data-testid="btn-army"]');
+    await page.waitForSelector('[data-testid="extended-portrait"]', { timeout: 5000 });
+    await page.keyboard.press("Control+2");
+    await page.waitForSelector('[data-testid="group-chip-2"]', { timeout: 5000 });
+    console.log("[e2e] Army selection, ExtendedPortrait & Control Group [2] verified.");
+
+    // 2. Open Shop Modal, toggle 'Show all' to exercise ItemThumb atlas/crest fallbacks & check 0 broken visible images
     await page.click('[data-testid="btn-shop"]');
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(600);
+    await page.click('[data-testid="shop-show-all"]');
+    await page.waitForTimeout(1000);
+    const brokenImages = await page.evaluate(() => {
+      const imgs = Array.from(document.querySelectorAll("img"));
+      return imgs
+        .filter((img) => {
+          const r = img.getBoundingClientRect();
+          const inView = r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight;
+          return inView && (!img.complete || img.naturalWidth === 0);
+        })
+        .map((img) => img.src);
+    });
+    console.log(`[e2e] Shop Show-All broken visible <img> count: ${brokenImages.length}`);
+    if (brokenImages.length > 0) console.log("  broken:", brokenImages.slice(0, 10));
     await page.screenshot({ path: path.join(OUT_DIR, "02_shop_modal.png") });
-    await page.locator("button", { hasText: "✕" }).first().click();
+    await page.click('[data-testid="modal-close"]');
 
     // 3. Open Systems Modal (Goals + Market) & screenshot
     await page.click('[data-testid="btn-systems"]');
     await page.waitForTimeout(500);
     await page.screenshot({ path: path.join(OUT_DIR, "03_systems_goals.png") });
-    await page.locator("button", { hasText: "✕" }).first().click();
+    await page.click('[data-testid="modal-close"]');
 
     // 4. Open World Map & launch a real Quest Battle
     await page.click('[data-testid="btn-worldmap"]');
@@ -85,7 +111,9 @@ async function main() {
 
     // Click first Quest island button
     await page.locator("button", { hasText: "Quest" }).first().click();
-    await page.waitForTimeout(2800);
+    await page.waitForSelector('[data-testid="group-chip-1"]', { timeout: 10000 });
+    await page.waitForSelector('[data-testid="extended-portrait"]', { timeout: 10000 });
+    await page.waitForTimeout(3000);
     const battleFps = await page.locator('[data-testid="fps-badge"]').innerText();
     console.log(`[e2e] Quest Battle telemetry: ${battleFps}`);
     await page.screenshot({ path: path.join(OUT_DIR, "05_quest_battle.png") });
@@ -95,7 +123,7 @@ async function main() {
     console.log(`[e2e] Failed requests (>=400): ${failedRequests.length}`);
     if (failedRequests.length > 0) console.log("  failed:", failedRequests.slice(0, 10));
 
-    if (consoleErrors.length > 0 || failedRequests.length > 0) {
+    if (consoleErrors.length > 0 || failedRequests.length > 0 || brokenImages.length > 0) {
       process.exitCode = 1;
     }
   } finally {

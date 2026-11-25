@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useGameStore } from "../store/gameStore.js";
+import { CornerRivets } from "./ClassicFrame.js";
 import { HudIcon, ResourceIcon, SpellSvgIcon } from "./GameIcons.js";
 
 export function MagicBar(props: { onBuyMana: (useCash: boolean) => void }) {
@@ -14,7 +15,8 @@ export function MagicBar(props: { onBuyMana: (useCash: boolean) => void }) {
   return (
     <div className="pointer-events-auto flex flex-col items-start gap-2">
       {expanded && (
-        <div className="w-[490px] max-w-[92vw] rounded-2xl border-2 border-amber-400/85 bg-gradient-to-b from-[#2b1e36]/96 to-[#151226]/96 p-3 shadow-2xl">
+        <div className="sp-panel relative w-[490px] max-w-[92vw] rounded-2xl p-3.5">
+          <CornerRivets />
           <div className="mb-2 flex items-center justify-between border-b border-amber-400/30 pb-1.5">
             <div className="flex items-center gap-1.5 text-xs font-black text-amber-300">
               <HudIcon name="magic" className="h-4 w-4" />

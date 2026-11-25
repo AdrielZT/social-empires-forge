@@ -5,6 +5,7 @@ import { useGameStore } from "../store/gameStore.js";
 
 export function Minimap(props: { controller: GameController | null }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const draggingRef = useRef(false);
   const expansions = useGameStore((s) => s.expansions);
 
   useEffect(() => {
@@ -28,8 +29,8 @@ export function Minimap(props: { controller: GameController | null }) {
       ctx.lineTo(4, h / 2);
       ctx.closePath();
       ctx.fill();
-      ctx.strokeStyle = "#d97706";
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "#d49b38";
+      ctx.lineWidth = 1.75;
       ctx.stroke();
 
       const project = (tx: number, ty: number) => ({
@@ -38,7 +39,7 @@ export function Minimap(props: { controller: GameController | null }) {
       });
 
       // Owned expansions
-      ctx.fillStyle = "rgba(132, 204, 22, 0.35)";
+      ctx.fillStyle = "rgba(132, 204, 22, 0.36)";
       for (const expId of expansions) {
         const idx = expId - 1;
         const row = Math.floor(idx / EXPANSION_GRID_DIM);
@@ -63,15 +64,41 @@ export function Minimap(props: { controller: GameController | null }) {
         if (!e.alive) continue;
         const pt = project(e.tx, e.ty);
         ctx.fillStyle =
-          e.team === "enemy" ? "#ef4444" : e.type === "u" ? "#38bdf8" : "#facc15";
+          e.team === "enemy" ? "#ef4444" : e.team === "neutral" ? "#a3e635" : e.type === "u" ? "#38bdf8" : "#facc15";
         ctx.fillRect(pt.x - 1, pt.y - 1, 2.5, 2.5);
       }
-    }, 300);
+
+      // Live Camera Viewport Trapezoid (QoL)
+      const quad = ctrl.renderer.camera.getViewportTileQuad();
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(w / 2, 4);
+      ctx.lineTo(w - 4, h / 2);
+      ctx.lineTo(w / 2, h - 4);
+      ctx.lineTo(4, h / 2);
+      ctx.closePath();
+      ctx.clip();
+
+      const q0 = project(quad[0].tx, quad[0].ty);
+      const q1 = project(quad[1].tx, quad[1].ty);
+      const q2 = project(quad[2].tx, quad[2].ty);
+      const q3 = project(quad[3].tx, quad[3].ty);
+      ctx.strokeStyle = "rgba(255, 248, 220, 0.92)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(q0.x, q0.y);
+      ctx.lineTo(q1.x, q1.y);
+      ctx.lineTo(q2.x, q2.y);
+      ctx.lineTo(q3.x, q3.y);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+    }, 150);
 
     return () => window.clearInterval(timer);
   }, [props.controller, expansions]);
 
-  const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const moveCameraToEvent = (e: React.PointerEvent<HTMLCanvasElement>, smooth: boolean) => {
     const ctrl = props.controller;
     const cvs = canvasRef.current;
     if (!ctrl || !cvs) return;
@@ -82,16 +109,31 @@ export function Minimap(props: { controller: GameController | null }) {
     const diff = nx * 100;
     const tx = Math.max(0, Math.min(99, (sum + diff) * 0.5));
     const ty = Math.max(0, Math.min(99, (sum - diff) * 0.5));
-    ctrl.renderer.camera.centerOnTile(tx, ty);
+    if (smooth) ctrl.renderer.camera.smoothCenterOnTile(tx, ty);
+    else ctrl.renderer.camera.centerOnTile(tx, ty);
   };
 
   return (
     <canvas
       ref={canvasRef}
-      width={164}
-      height={96}
-      onClick={handleClick}
-      className="pointer-events-auto cursor-pointer rounded-xl border border-amber-500/60 bg-stone-950/85 shadow-xl"
+      width={172}
+      height={100}
+      onPointerDown={(e) => {
+        draggingRef.current = true;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        moveCameraToEvent(e, true);
+      }}
+      onPointerMove={(e) => {
+        if (!draggingRef.current) return;
+        moveCameraToEvent(e, false);
+      }}
+      onPointerUp={(e) => {
+        draggingRef.current = false;
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+      }}
+      className="sp-panel pointer-events-auto cursor-pointer rounded-xl"
     />
   );
 }

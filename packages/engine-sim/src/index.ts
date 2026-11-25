@@ -3,6 +3,7 @@ import { MAP_SIZE_TILES, SIM_TICK_MS } from "@sef/shared-types";
 export * from "./economy/formulas.js";
 export * from "./commands/applyCommand.js";
 export * from "./pathfinding/Pathfinder.js";
+export * from "./combat/SquadManager.js";
 export * from "./combat/BattleEngine.js";
 
 /**

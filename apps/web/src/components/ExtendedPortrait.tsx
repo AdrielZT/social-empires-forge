@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { getUiStrings } from "@sef/game-data";
+import type { StanceMode } from "@sef/engine-sim";
 import { useGameStore } from "../store/gameStore.js";
-import { thumbUrl } from "../api/paths.js";
+import { CornerRivets } from "./ClassicFrame.js";
+import { ItemThumb } from "./ItemThumb.js";
 import { HudIcon, ResourceIcon } from "./GameIcons.js";
 
 const RESOURCE_NODE_SUBCATS = new Set([2, 3, 4, 125, 126, 127]);
@@ -15,6 +17,8 @@ const TRAINABLE_BY_SUBCAT: Record<number, number[]> = {
   341: [520, 521, 522] // Siege Workshops
 };
 
+const SPECIAL_HOTKEYS = ["Q", "E", "R", "F"];
+
 export function ExtendedPortrait(props: {
   onCollect: () => void;
   onUpgrade: () => void;
@@ -23,6 +27,10 @@ export function ExtendedPortrait(props: {
   onStore: () => void;
   onSell: () => void;
   onTrainUnit: (unitId: number) => void;
+  onTriggerSpecial: (specialIndex: number) => void;
+  onTriggerLimit: () => void;
+  onChangeStance: (stance: StanceMode) => void;
+  onStopUnits: () => void;
   onClose: () => void;
 }) {
   const locale = useGameStore((s) => s.locale);
@@ -69,22 +77,23 @@ export function ExtendedPortrait(props: {
   if (!sel || !def) return null;
 
   const isResourceNode = def.type === "b" && RESOURCE_NODE_SUBCATS.has(def.subcatFunctional);
+  const limitPct = sel.limitMax > 0 ? Math.min(100, Math.round((sel.limitGauge / sel.limitMax) * 100)) : 0;
+  const limitReady = sel.limitMax > 0 && sel.limitGauge >= sel.limitMax;
 
   return (
-    <aside className="pointer-events-auto absolute right-3 top-16 z-20 w-76 rounded-2xl border-2 border-amber-500/85 bg-gradient-to-b from-[#3d2514]/96 to-[#201208]/96 p-3 shadow-2xl text-amber-50">
+    <aside
+      data-testid="extended-portrait"
+      className="sp-panel pointer-events-auto absolute right-3 top-16 z-20 w-80 rounded-2xl p-3.5 text-amber-50"
+    >
+      <CornerRivets />
       {/* Header */}
       <div className="flex items-start gap-2.5">
-        <img
-          src={thumbUrl(sel.imgName)}
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = "none";
-          }}
-          alt={sel.name}
-          className="h-14 w-14 rounded-xl border-2 border-amber-400/75 bg-stone-950 object-cover shrink-0"
-        />
+        <div className="sp-inset h-14 w-14 overflow-hidden rounded-xl shrink-0">
+          <ItemThumb imgName={sel.imgName} alt={sel.name} itemType={sel.type} className="h-full w-full object-cover" />
+        </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-1">
-            <h2 className="truncate text-sm font-black text-amber-300">
+            <h2 className="truncate text-sm font-black text-amber-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.85)]">
               {sel.name}
               {selectedCount > 1 ? ` (×${selectedCount})` : ""}
             </h2>
@@ -92,12 +101,12 @@ export function ExtendedPortrait(props: {
               type="button"
               onClick={props.onClose}
               title={locale === "es" ? "Deseleccionar (Esc)" : "Deselect (Esc)"}
-              className="rounded px-1 text-xs font-black text-amber-200/80 hover:bg-stone-800 hover:text-white cursor-pointer"
+              className="sp-btn-red flex h-5 w-5 items-center justify-center rounded text-[10px] font-black cursor-pointer"
             >
               ✕
             </button>
           </div>
-          <div className="text-[11px] text-amber-100/75">
+          <div className="text-[11px] text-amber-100/80">
             #{def.id} ·{" "}
             {sel.team === "enemy"
               ? locale === "es"
@@ -116,26 +125,26 @@ export function ExtendedPortrait(props: {
                     : "Building"}{" "}
             · ({sel.tx}, {sel.ty})
           </div>
-          {/* HP Bar */}
-          <div className="mt-1.5 h-2.5 w-full overflow-hidden rounded-full bg-stone-950 border border-amber-500/30">
+          {/* Classic BarraVidaMC style HP Bar */}
+          <div className="mt-1.5 h-3 w-full overflow-hidden rounded-full bg-[#450d0d] border border-amber-400/55 shadow-inner">
             <div
               className={`h-full transition-all ${
                 sel.team === "enemy"
-                  ? "bg-gradient-to-r from-red-600 to-rose-400"
-                  : "bg-gradient-to-r from-emerald-500 to-lime-400"
+                  ? "bg-gradient-to-b from-rose-400 via-red-500 to-red-700"
+                  : "bg-gradient-to-b from-lime-300 via-emerald-500 to-emerald-700"
               }`}
               style={{ width: `${Math.max(0, Math.min(100, (sel.hp / Math.max(1, sel.maxHp)) * 100))}%` }}
             />
           </div>
-          <div className="mt-0.5 flex items-center justify-between text-[10px] font-bold text-amber-200/85">
+          <div className="mt-0.5 flex items-center justify-between text-[10px] font-bold text-amber-200/90">
             <span className="flex items-center gap-1">
               <HudIcon name="heart" className="h-3 w-3" />
               {sel.hp}/{sel.maxHp}
             </span>
             {sel.limitMax > 0 && (
-              <span className="flex items-center gap-0.5 text-sky-300">
+              <span className={`flex items-center gap-0.5 ${limitReady ? "text-amber-300 animate-pulse" : "text-sky-300"}`}>
                 <HudIcon name="speed" className="h-3 w-3" />
-                Limit {sel.limitGauge}/{sel.limitMax}
+                Limit {limitPct}%
               </span>
             )}
           </div>
@@ -145,41 +154,120 @@ export function ExtendedPortrait(props: {
       {/* Stats */}
       {!isResourceNode && (
         <div className="mt-2 grid grid-cols-4 gap-1 text-center text-[11px] font-bold">
-          <div className="flex items-center justify-center gap-1 rounded bg-stone-900/85 py-1 border border-amber-500/20">
+          <div className="sp-inset flex items-center justify-center gap-1 rounded py-1" title={locale === "es" ? "Ataque" : "Attack"}>
             <HudIcon name="sword" className="h-3.5 w-3.5" />
             <span>{sel.attack}</span>
           </div>
-          <div className="flex items-center justify-center gap-1 rounded bg-stone-900/85 py-1 border border-amber-500/20">
+          <div className="sp-inset flex items-center justify-center gap-1 rounded py-1" title={locale === "es" ? "Defensa" : "Defense"}>
             <HudIcon name="shield" className="h-3.5 w-3.5" />
             <span>{sel.defense}</span>
           </div>
-          <div className="flex items-center justify-center gap-1 rounded bg-stone-900/85 py-1 border border-amber-500/20">
+          <div className="sp-inset flex items-center justify-center gap-1 rounded py-1" title={locale === "es" ? "Alcance" : "Range"}>
             <HudIcon name="range" className="h-3.5 w-3.5" />
             <span>{sel.attackRange}</span>
           </div>
-          <div className="flex items-center justify-center gap-1 rounded bg-stone-900/85 py-1 border border-amber-500/20">
+          <div className="sp-inset flex items-center justify-center gap-1 rounded py-1" title={locale === "es" ? "Velocidad" : "Speed"}>
             <HudIcon name="speed" className="h-3.5 w-3.5" />
             <span>{sel.velocity}</span>
           </div>
         </div>
       )}
 
-      {/* Special Attacks (Phase 5 Data-Driven Behaviors) */}
-      {sel.behavior && sel.behavior.specials.length > 0 && (
-        <div className="mt-2 rounded-lg border border-sky-400/30 bg-slate-950/70 p-2">
-          <div className="text-[10px] font-black uppercase tracking-wide text-sky-300">
-            {locale === "es" ? "Ataques Especiales (1.4.07)" : "Special Attacks (1.4.07)"}
+      {/* Stance Selector (QoL mapped 1:1 to IA.CONDITION_AGGRESSIVE / DEFENSIVE / HOLD_POSITION) */}
+      {def.type === "u" && sel.team === "player" && (
+        <div className="mt-2 grid grid-cols-4 gap-1 text-[10px] font-black">
+          {(
+            [
+              ["aggressive", locale === "es" ? "Agresivo" : "Aggr."],
+              ["defensive", locale === "es" ? "Defensa" : "Def."],
+              ["stand", locale === "es" ? "Quieto" : "Hold"]
+            ] as const
+          ).map(([st, label]) => (
+            <button
+              key={st}
+              type="button"
+              onClick={() => props.onChangeStance(st)}
+              className={`rounded-md py-1 cursor-pointer ${sel.stance === st ? "sp-btn-gold" : "sp-btn-stone"}`}
+            >
+              {label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={props.onStopUnits}
+            title={locale === "es" ? "Detener tropas (X)" : "Stop units (X)"}
+            className="sp-btn-red rounded-md py-1 cursor-pointer"
+          >
+            {locale === "es" ? "Alto (X)" : "Stop (X)"}
+          </button>
+        </div>
+      )}
+
+      {/* Interactive Special Attacks & Limit Attack (`PortraitSpecialAttack` / `PortraitLimitAttack`) */}
+      {sel.team === "player" && ((sel.behavior && sel.behavior.specials.length > 0) || sel.limitMax > 0) && (
+        <div className="sp-inset mt-2 rounded-xl p-2">
+          <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wide text-sky-300">
+            <span>{locale === "es" ? "Habilidades 1.4.07" : "1.4.07 Abilities"}</span>
+            <span className="text-amber-300/75">Q/E/R/F · T</span>
           </div>
-          <div className="mt-1 flex flex-wrap gap-1">
-            {sel.behavior.specials.slice(0, 4).map((sp) => (
-              <span
-                key={sp.id}
-                className="rounded bg-sky-900/70 px-1.5 py-0.5 text-[10px] font-bold text-sky-100 border border-sky-400/25"
+          {sel.behavior && sel.behavior.specials.length > 0 && (
+            <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+              {sel.behavior.specials.slice(0, 4).map((sp, idx) => {
+                const cdSec = sel.specialCooldownSecs[idx] ?? 0;
+                const ready = cdSec <= 0;
+                return (
+                  <button
+                    key={sp.id}
+                    type="button"
+                    disabled={!ready}
+                    onClick={() => props.onTriggerSpecial(idx)}
+                    className={`flex items-center justify-between rounded-lg px-2 py-1 text-[10px] font-extrabold transition ${
+                      ready
+                        ? "border border-sky-400/70 bg-sky-900/75 hover:bg-sky-700/80 text-sky-50 cursor-pointer"
+                        : "border border-stone-700 bg-stone-900/80 text-stone-400 cursor-not-allowed"
+                    }`}
+                  >
+                    <span className="truncate">
+                      [{SPECIAL_HOTKEYS[idx]}] {sp.name ?? sp.kind.replace("_", " ")}
+                    </span>
+                    <span className="ml-1 shrink-0 font-black text-amber-300">
+                      {ready ? `×${sp.damageMultiplier}` : `${cdSec}s`}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {sel.limitMax > 0 && (
+            <div className="mt-2">
+              <button
+                type="button"
+                disabled={!limitReady}
+                data-testid="btn-limit-attack"
+                onClick={props.onTriggerLimit}
+                className={`relative w-full overflow-hidden rounded-lg py-1.5 text-xs font-black transition ${
+                  limitReady
+                    ? "sp-btn-gold animate-pulse cursor-pointer"
+                    : "border border-sky-500/40 bg-slate-900/90 text-sky-200/80 cursor-not-allowed"
+                }`}
               >
-                {sp.kind.replace("_", " ")} (×{sp.damageMultiplier})
-              </span>
-            ))}
-          </div>
+                {!limitReady && (
+                  <span
+                    className="pointer-events-none absolute inset-y-0 left-0 bg-sky-500/35 transition-all"
+                    style={{ width: `${limitPct}%` }}
+                  />
+                )}
+                <span className="relative z-10">
+                  {limitReady
+                    ? locale === "es"
+                      ? "⚡ ¡ACTIVAR LIMIT! (T)"
+                      : "⚡ ACTIVATE LIMIT! (T)"
+                    : `LIMIT ${sel.limitGauge}/${sel.limitMax} (${limitPct}%)`}
+                </span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -196,16 +284,11 @@ export function ExtendedPortrait(props: {
                 key={u.id}
                 type="button"
                 onClick={() => props.onTrainUnit(u.id)}
-                className="flex items-center gap-1.5 rounded-lg border border-amber-500/35 bg-stone-900/90 hover:bg-amber-600/30 p-1 text-left cursor-pointer"
+                className="sp-card flex items-center gap-1.5 rounded-lg p-1 text-left cursor-pointer"
               >
-                <img
-                  src={thumbUrl(u.imgName)}
-                  alt={u.name}
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.opacity = "0.2";
-                  }}
-                  className="h-7 w-7 rounded object-cover bg-stone-950 shrink-0"
-                />
+                <div className="sp-inset h-7 w-7 overflow-hidden rounded shrink-0">
+                  <ItemThumb imgName={u.imgName} alt={u.name} itemType="u" className="h-full w-full object-cover" />
+                </div>
                 <div className="min-w-0 leading-tight">
                   <div className="truncate text-[10px] font-black text-amber-100">{u.name}</div>
                   <div className="flex items-center gap-0.5 text-[10px] font-bold text-amber-300">
@@ -226,7 +309,7 @@ export function ExtendedPortrait(props: {
             <button
               type="button"
               onClick={props.onCollect}
-              className="col-span-2 flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 py-1.5 text-stone-950 cursor-pointer"
+              className="sp-btn-gold col-span-2 flex items-center justify-center gap-1.5 rounded-lg py-1.5 cursor-pointer"
             >
               <ResourceIcon type={sel.collectType || "g"} className="h-4 w-4" />
               <span>
@@ -238,39 +321,23 @@ export function ExtendedPortrait(props: {
             <button
               type="button"
               onClick={props.onUpgrade}
-              className="col-span-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 py-1.5 text-white cursor-pointer"
+              className="sp-btn-green col-span-2 rounded-lg py-1.5 cursor-pointer"
             >
               {t.hud.upgrade} → {upgradeDef.name} ({upgradeDef.cost})
             </button>
           )}
           {def.type === "b" && (
-            <button
-              type="button"
-              onClick={props.onStartMove}
-              className="rounded-lg bg-stone-800 hover:bg-stone-700 py-1 text-amber-100 cursor-pointer"
-            >
+            <button type="button" onClick={props.onStartMove} className="sp-btn-stone rounded-lg py-1 cursor-pointer">
               {t.hud.move}
             </button>
           )}
-          <button
-            type="button"
-            onClick={props.onRotate}
-            className="rounded-lg bg-stone-800 hover:bg-stone-700 py-1 text-amber-100 cursor-pointer"
-          >
+          <button type="button" onClick={props.onRotate} className="sp-btn-stone rounded-lg py-1 cursor-pointer">
             {t.hud.rotate}
           </button>
-          <button
-            type="button"
-            onClick={props.onStore}
-            className="rounded-lg bg-stone-800 hover:bg-stone-700 py-1 text-sky-200 cursor-pointer"
-          >
+          <button type="button" onClick={props.onStore} className="sp-btn-stone rounded-lg py-1 text-sky-200 cursor-pointer">
             {t.hud.store}
           </button>
-          <button
-            type="button"
-            onClick={props.onSell}
-            className="rounded-lg bg-red-900/80 hover:bg-red-800 py-1 text-red-100 cursor-pointer"
-          >
+          <button type="button" onClick={props.onSell} className="sp-btn-red rounded-lg py-1 cursor-pointer">
             {t.hud.sell}
           </button>
         </div>
@@ -278,34 +345,25 @@ export function ExtendedPortrait(props: {
 
       {/* Contextual RTS guidance */}
       {def.type === "u" && sel.team === "player" && (
-        <div className="mt-2 space-y-1.5">
-          <p className="rounded-lg bg-stone-950/75 px-2.5 py-1.5 text-[10px] leading-snug text-emerald-200/90">
-            {locale === "es"
-              ? "Clic izq. o der.: suelo para mover · árbol/piedra/oro/granja para recolectar · enemigo para atacar. Doble clic selecciona iguales."
-              : "Left or right click: ground to move · tree/stone/gold/farm to harvest · enemy to attack. Double-click selects same type."}
-          </p>
-          <button
-            type="button"
-            onClick={props.onClose}
-            className="w-full rounded-lg border border-amber-500/35 bg-stone-900/85 hover:bg-stone-800 py-1 text-[11px] font-bold text-amber-200 cursor-pointer"
-          >
-            {locale === "es" ? "Deseleccionar (Esc)" : "Deselect (Esc)"}
-          </button>
-        </div>
+        <p className="sp-inset mt-2 rounded-lg px-2.5 py-1.5 text-[10px] leading-snug text-emerald-200/90">
+          {locale === "es"
+            ? "Clic izq./der.: mover, talar/recolectar o atacar · Ctrl+1..9 guarda grupo · Doble clic selecciona iguales."
+            : "Left/Right click: move, harvest, or attack · Ctrl+1..9 saves squad group · Double-click selects same type."}
+        </p>
       )}
 
       {isResourceNode && (
-        <p className="mt-2 rounded-lg bg-stone-950/75 px-2.5 py-1.5 text-[10px] leading-snug text-amber-200/90">
+        <p className="sp-inset mt-2 rounded-lg px-2.5 py-1.5 text-[10px] leading-snug text-amber-200/90">
           {locale === "es"
-            ? `Recurso recolectable (+${sel.collectAmount}). Selecciona un aldeano y haz clic aquí para recolectar.`
-            : `Harvestable resource (+${sel.collectAmount}). Select a villager and click here to gather.`}
+            ? `Recurso recolectable (+${sel.collectAmount}). Selecciona un aldeano (Tab) y haz clic aquí.`
+            : `Harvestable resource (+${sel.collectAmount}). Select a villager (Tab) and click here.`}
         </p>
       )}
 
       {sel.team === "enemy" && (
-        <p className="mt-2 rounded-lg bg-red-950/75 border border-red-500/35 px-2.5 py-1.5 text-[10px] leading-snug text-red-200">
+        <p className="mt-2 rounded-lg bg-red-950/80 border border-red-500/45 px-2.5 py-1.5 text-[10px] leading-snug text-red-200">
           {locale === "es"
-            ? "Unidad o estructura enemiga. Selecciona tus tropas (o pulsa 'Ejército') y haz clic aquí para atacar."
+            ? "Objetivo hostil. Selecciona tus tropas (o pulsa 'Ejército') y haz clic aquí para atacar."
             : "Hostile target. Select your troops (or click 'Army') and click here to attack."}
         </p>
       )}
