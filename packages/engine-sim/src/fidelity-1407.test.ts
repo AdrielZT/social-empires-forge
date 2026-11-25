@@ -279,4 +279,66 @@ describe("Social Empires 1.4.07 — 1:1 Combat, IA.as/IAWithAgro.as, Cooldowns, 
     expect(dragon.limitGauge).toBe(0);
     expect(siege.hp).toBeLessThan(2000);
   });
+
+  it("captures wild animals (cows/sheep/horses/boars) and sends them to matching Ranch or Town Hall fallback", () => {
+    const grid = new OccupancyGrid();
+    const footman = makeItem({ id: 508, name: "Footman", type: "u", attack: 15, life: 120, velocity: 5 });
+    const cow = makeItem({ id: 505, name: "Cow", type: "u", subcatFunctional: 74, life: 60, velocity: 4 });
+    const cowRanch = makeItem({ id: 12, name: "Cow Ranch", type: "b", width: 2, height: 2, subcatFunctional: 123, unitCapacity: 4 });
+    const townHall = makeItem({ id: 10, name: "Town Hall", type: "b", width: 4, height: 4, subcatFunctional: 135 });
+
+    // Case A: Cow Ranch exists -> cow is captured and walks into the Cow Ranch
+    const engWithRanch = new BattleEngine(
+      grid,
+      new Map([[508, footman], [505, cow], [12, cowRanch], [10, townHall]])
+    );
+    const ranch = engWithRanch.spawnFromItem(12, 46, 50, "player")!;
+    engWithRanch.spawnFromItem(508, 50, 50, "player");
+    const wildCow = engWithRanch.spawnFromItem(505, 52, 50, "neutral")!;
+
+    let capturedEv = false;
+    let garrisonedEv = false;
+    for (let i = 0; i < 120; i++) {
+      const evs = engWithRanch.step();
+      if (evs.some((e) => e.type === "animal_captured" && e.destKind === "ranch")) capturedEv = true;
+      if (evs.some((e) => e.type === "animal_garrisoned" && e.buildingUid === ranch.uid)) garrisonedEv = true;
+    }
+    expect(capturedEv).toBe(true);
+    expect(garrisonedEv).toBe(true);
+    expect(ranch.garrison).toContain(505);
+    expect(wildCow.alive).toBe(false);
+
+    // Case B: No Cow Ranch -> cow is captured and walks toward Town Hall as a player unit
+    const grid2 = new OccupancyGrid();
+    const engNoRanch = new BattleEngine(grid2, new Map([[508, footman], [505, cow], [10, townHall]]));
+    engNoRanch.spawnFromItem(10, 40, 50, "player");
+    engNoRanch.spawnFromItem(508, 50, 50, "player");
+    const wildCow2 = engNoRanch.spawnFromItem(505, 52, 50, "neutral")!;
+
+    let thCaptured = false;
+    for (let i = 0; i < 30; i++) {
+      const evs = engNoRanch.step();
+      if (evs.some((e) => e.type === "animal_captured" && e.destKind === "townhall")) thCaptured = true;
+    }
+    expect(thCaptured).toBe(true);
+    expect(wildCow2.team).toBe("player");
+    expect(wildCow2.alive).toBe(true);
+  });
+
+  it("allows defensive player units ordered to attack distant wild orcs/trolls (>20 tiles) without aborting via leash", () => {
+    const grid = new OccupancyGrid();
+    const knight = makeItem({ id: 508, name: "Knight", type: "u", attack: 20, life: 200, velocity: 6 });
+    const orc = makeItem({ id: 525, name: "Wild Orc", type: "u", attack: 10, life: 120, velocity: 4, race: "t" });
+    const engine = new BattleEngine(grid, new Map([[508, knight], [525, orc]]));
+
+    const hero = engine.spawnFromItem(508, 30, 50, "player")!;
+    engine.setUnitsStance([hero.uid], "defensive");
+    const targetOrc = engine.spawnFromItem(525, 62, 50, "enemy")!; // 32 tiles away (> 20 leash)
+
+    engine.orderAttack([hero.uid], targetOrc.uid);
+    for (let i = 0; i < 350; i++) {
+      engine.step();
+    }
+    expect(targetOrc.hp).toBeLessThan(120);
+  });
 });

@@ -33,7 +33,11 @@ export type IACondition = "defensive" | "aggressive" | "passive" | "survive";
 export type IAState = "idle" | "hold_position" | "patrol" | "force_move" | "attacking" | "fleeing";
 
 export const SUBCAT_UNIT_PEASANT = 71;
+export const SUBCAT_UNIT_COW = 74;
+export const SUBCAT_UNIT_SHEEP = 75;
 export const SUBCAT_UNIT_SIEGE = 81;
+export const SUBCAT_UNIT_HORSE = 88;
+export const SUBCAT_UNIT_BOAR = 90;
 export const SUBCAT_BUILDING_MINE = 121;
 export const SUBCAT_BUILDING_FARM = 122;
 export const SUBCAT_BUILDING_RANCH = 123;
@@ -42,6 +46,32 @@ export const SUBCAT_RESOURCE_TREE = 125;
 export const SUBCAT_RESOURCE_STONE = 126;
 export const SUBCAT_RESOURCE_GOLD = 127;
 export const SUBCAT_BUILDING_TOWNHALL = 135;
+
+/** Canonical `Config.CAPTURE_RANGE` (`Config.as:146`) */
+export const CONFIG_CAPTURE_RANGE = 4;
+
+/** Canonical ranch & stable building IDs per animal category (`Constants.as`, `IsoEngine.as:2778-2827`) */
+export const RANCH_SHEEP_IDS = new Set([11, 190, 191]);
+export const RANCH_COW_IDS = new Set([12, 192, 193]);
+export const RANCH_BOAR_IDS = new Set([340, 341, 342]);
+export const STABLE_TRAINING_IDS = new Set([227]);
+
+export function isCapturableAnimalSubcat(subcat: number): boolean {
+  return (
+    subcat === SUBCAT_UNIT_COW ||
+    subcat === SUBCAT_UNIT_SHEEP ||
+    subcat === SUBCAT_UNIT_HORSE ||
+    subcat === SUBCAT_UNIT_BOAR
+  );
+}
+
+export function getMatchingAnimalBuildingIds(subcat: number): ReadonlySet<number> | null {
+  if (subcat === SUBCAT_UNIT_COW) return RANCH_COW_IDS;
+  if (subcat === SUBCAT_UNIT_SHEEP) return RANCH_SHEEP_IDS;
+  if (subcat === SUBCAT_UNIT_BOAR) return RANCH_BOAR_IDS;
+  if (subcat === SUBCAT_UNIT_HORSE) return STABLE_TRAINING_IDS;
+  return null;
+}
 
 export function isEnterableWorkBuildingSubcat(subcat: number): boolean {
   return subcat === SUBCAT_BUILDING_MINE || subcat === SUBCAT_BUILDING_FARM || subcat === SUBCAT_BUILDING_MILL;
@@ -169,6 +199,7 @@ export interface SimEntity {
   targetUid: number | null;
   harvestTargetUid: number | null;
   harvestProgress: number;
+  animalHomeBuildingUid: number | null;
   status: StatusEffects;
   behavior?: UnitBehaviorProfile;
 }
@@ -229,6 +260,26 @@ export type SimVisualEvent =
       buildingTx: number;
       buildingTy: number;
       subcatFunctional: number;
+    }
+  | {
+      type: "animal_captured";
+      animalUid: number;
+      animalItemId: number;
+      tx: number;
+      ty: number;
+      destUid: number | null;
+      destKind: "ranch" | "townhall";
+    }
+  | {
+      type: "animal_garrisoned";
+      animalUid: number;
+      animalItemId: number;
+      animalTx: number;
+      animalTy: number;
+      buildingUid: number;
+      buildingItemId: number;
+      buildingTx: number;
+      buildingTy: number;
     }
   | { type: "spell_cast"; magicId: number; tx: number; ty: number; radius: number }
   | { type: "limit_cast"; unitUid: number; tx: number; ty: number; radius: number }
@@ -466,6 +517,7 @@ export class BattleEngine {
       targetUid: null,
       harvestTargetUid: null,
       harvestProgress: 0,
+      animalHomeBuildingUid: null,
       status: createDefaultStatus(),
       behavior
     };
@@ -610,9 +662,13 @@ export class BattleEngine {
     for (const ent of attackers) {
       ent.squadId = squad.id;
       ent.harvestTargetUid = null;
+      ent.animalHomeBuildingUid = null;
       ent.targetUid = targetUid;
       ent.iaState = "attacking";
       const assignedTile = formation.get(ent.uid);
+      // Anchor defensive leash at the explicit attack target so player troops never abort mid-march
+      ent.originTx = Math.round(assignedTile?.tx ?? target.tx);
+      ent.originTy = Math.round(assignedTile?.ty ?? target.ty);
       if (assignedTile) {
         ent.path = findPath(this.grid, { tx: ent.tx, ty: ent.ty }, assignedTile, {
           flying: ent.flying,
@@ -940,6 +996,18 @@ export class BattleEngine {
         continue;
       }
 
+      // Canonical wild animal capture (`IA.as:241-294`) & ranch homing (`IsoUnit.as:2850-2877`)
+      if (ent.type === "u" && isCapturableAnimalSubcat(ent.subcatFunctional)) {
+        if (ent.team === "neutral") {
+          this.tickWildAnimalCapture(ent, events);
+          continue;
+        }
+        if (ent.team === "player" && ent.animalHomeBuildingUid !== null) {
+          this.tickCapturedAnimalHome(ent, events);
+          continue;
+        }
+      }
+
       // Combat AI & movement
       if (ent.type === "u") {
         // Canonical `IsoUnit.updateGarbageCollector` every 61 ticks (`IsoUnit.as:570, 637-676`)
@@ -966,6 +1034,180 @@ export class BattleEngine {
     }
 
     return events;
+  }
+
+  /**
+   * Orders a player-owned animal (cow/sheep/horse/boar) to walk into a compatible ranch/stable.
+   */
+  orderSendAnimalToRanch(animalUid: number, buildingUid: number): boolean {
+    const animal = this.entities.get(animalUid);
+    const bldg = this.entities.get(buildingUid);
+    if (!animal || !animal.alive || animal.type !== "u" || animal.team !== "player") return false;
+    if (!bldg || !bldg.alive || bldg.type !== "b" || bldg.team !== "player") return false;
+    const allowedIds = getMatchingAnimalBuildingIds(animal.subcatFunctional);
+    if (!allowedIds || !allowedIds.has(bldg.itemId)) return false;
+    const cap = Math.max(1, bldg.unitCapacity || 5);
+    if (bldg.garrison.length >= cap) return false;
+
+    animal.animalHomeBuildingUid = bldg.uid;
+    animal.targetUid = null;
+    animal.harvestTargetUid = null;
+    animal.iaState = "force_move";
+    animal.path = findPath(
+      this.grid,
+      { tx: animal.tx, ty: animal.ty },
+      { tx: bldg.tx, ty: bldg.ty },
+      { flying: false, ignoreEntityId: animal.uid, targetEntityId: bldg.uid, stopDistance: 1.4, unitOccupancy: this.unitOccupancy }
+    );
+    return true;
+  }
+
+  private findNearestAnimalBuilding(animal: SimEntity): SimEntity | null {
+    const allowedIds = getMatchingAnimalBuildingIds(animal.subcatFunctional);
+    if (!allowedIds) return null;
+    let best: SimEntity | null = null;
+    let bestDist = Infinity;
+    for (const e of this.entities.values()) {
+      if (!e.alive || e.type !== "b" || e.team !== "player") continue;
+      if (!allowedIds.has(e.itemId)) continue;
+      const cap = Math.max(1, e.unitCapacity || 5);
+      if (e.garrison.length >= cap) continue;
+      const d = Math.hypot(e.tx - animal.tx, e.ty - animal.ty);
+      if (d < bestDist) {
+        bestDist = d;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  private findPlayerTownHall(): SimEntity | null {
+    for (const e of this.entities.values()) {
+      if (e.alive && e.type === "b" && e.team === "player" && e.subcatFunctional === SUBCAT_BUILDING_TOWNHALL) {
+        return e;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Canonical `IA.as:241-294` wild animal capture:
+   * Any player unit within `CONFIG_CAPTURE_RANGE` (4 tiles) captures a neutral cow/sheep/horse/boar.
+   * The animal walks to its matching Ranch/Stable if one exists with free capacity; otherwise it walks
+   * to a free tile next to the player's Town Hall and remains as a player unit.
+   */
+  private tickWildAnimalCapture(ent: SimEntity, events: SimVisualEvent[]): void {
+    // Check capture every 6 ticks (~200ms) for low overhead
+    if ((this.tickCount + ent.uid) % 6 !== 0) return;
+
+    let captorFound = false;
+    for (const other of this.entities.values()) {
+      if (!other.alive || other.type !== "u" || other.team !== "player") continue;
+      if (isCapturableAnimalSubcat(other.subcatFunctional)) continue;
+      const d = Math.hypot(other.tx - ent.tx, other.ty - ent.ty);
+      if (d <= CONFIG_CAPTURE_RANGE) {
+        captorFound = true;
+        break;
+      }
+    }
+    if (!captorFound) return;
+
+    ent.team = "player";
+    ent.stance = "stand";
+    ent.iaCondition = "passive";
+
+    const ranch = this.findNearestAnimalBuilding(ent);
+    if (ranch) {
+      ent.animalHomeBuildingUid = ranch.uid;
+      ent.iaState = "force_move";
+      ent.path = findPath(
+        this.grid,
+        { tx: ent.tx, ty: ent.ty },
+        { tx: ranch.tx, ty: ranch.ty },
+        { flying: false, ignoreEntityId: ent.uid, targetEntityId: ranch.uid, stopDistance: 1.4, unitOccupancy: this.unitOccupancy }
+      );
+      events.push({
+        type: "animal_captured",
+        animalUid: ent.uid,
+        animalItemId: ent.itemId,
+        tx: ent.tx,
+        ty: ent.ty,
+        destUid: ranch.uid,
+        destKind: "ranch"
+      });
+      return;
+    }
+
+    const th = this.findPlayerTownHall();
+    if (th) {
+      const free = findNearestFreeTile(this.grid, this.unitOccupancy, Math.round(th.tx), Math.round(th.ty), {
+        ignoreUid: ent.uid,
+        maxRadius: 8
+      });
+      const goal = free ?? { tx: Math.round(th.tx), ty: Math.round(th.ty) };
+      ent.originTx = goal.tx;
+      ent.originTy = goal.ty;
+      ent.iaState = "force_move";
+      ent.path = findPath(this.grid, { tx: ent.tx, ty: ent.ty }, goal, {
+        flying: false,
+        ignoreEntityId: ent.uid,
+        unitOccupancy: this.unitOccupancy
+      });
+    }
+    events.push({
+      type: "animal_captured",
+      animalUid: ent.uid,
+      animalItemId: ent.itemId,
+      tx: ent.tx,
+      ty: ent.ty,
+      destUid: th?.uid ?? null,
+      destKind: "townhall"
+    });
+  }
+
+  private tickCapturedAnimalHome(ent: SimEntity, events: SimVisualEvent[]): void {
+    const bldg = ent.animalHomeBuildingUid !== null ? this.entities.get(ent.animalHomeBuildingUid) ?? null : null;
+    const cap = bldg ? Math.max(1, bldg.unitCapacity || 5) : 0;
+    if (!bldg || !bldg.alive || bldg.team !== "player" || bldg.garrison.length >= cap) {
+      ent.animalHomeBuildingUid = null;
+      ent.iaState = "idle";
+      ent.animState = 0;
+      return;
+    }
+
+    const dist = this.distanceBetween(ent, bldg);
+    if (dist <= 1.8) {
+      bldg.garrison.push(ent.itemId);
+      ent.alive = false;
+      ent.dyingTicks = 0;
+      ent.path = [];
+      ent.animalHomeBuildingUid = null;
+      this.unitOccupancy.release(ent.uid);
+      events.push({
+        type: "animal_garrisoned",
+        animalUid: ent.uid,
+        animalItemId: ent.itemId,
+        animalTx: Math.round(ent.tx),
+        animalTy: Math.round(ent.ty),
+        buildingUid: bldg.uid,
+        buildingItemId: bldg.itemId,
+        buildingTx: Math.round(bldg.tx),
+        buildingTy: Math.round(bldg.ty)
+      });
+      return;
+    }
+
+    if (ent.path.length === 0) {
+      ent.path = findPath(
+        this.grid,
+        { tx: ent.tx, ty: ent.ty },
+        { tx: bldg.tx, ty: bldg.ty },
+        { flying: false, ignoreEntityId: ent.uid, targetEntityId: bldg.uid, stopDistance: 1.4, unitOccupancy: this.unitOccupancy }
+      );
+    }
+    if (ent.path.length > 0) {
+      this.stepAlongPath(ent);
+    }
   }
 
   private createSquad(units: readonly SimEntity[], targetUid: number | null): SquadGroup {
@@ -1213,8 +1455,9 @@ export class BattleEngine {
     }
 
     // 2. Canonical `IA.CONDITION_DEFENSIVE` leash (`IA.as:191-198`):
-    // If Manhattan distance from origin exceeds 20 tiles, drop target and march back home!
-    if (effectiveCondition === "defensive") {
+    // If Manhattan distance from origin exceeds 20 tiles (during autonomous aggro, not explicit player squad attack),
+    // drop target and march back home!
+    if (effectiveCondition === "defensive" && ent.squadId === null) {
       const manhattanFromOrigin =
         Math.abs(ent.originTx - Math.round(ent.tx)) + Math.abs(ent.originTy - Math.round(ent.ty));
       if (manhattanFromOrigin > CONFIG_DEFENSIVE_LEASH_MANHATTAN) {

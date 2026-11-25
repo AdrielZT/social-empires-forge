@@ -57,14 +57,26 @@ function getSpecialInteriorConfig(itemId: number, subcat: number): SpecialInteri
   if (itemId === 1463) {
     return { labelEs: "Abrir Máquina del Tiempo", labelEn: "Open Time Machine", iconFile: "timemachine.png" };
   }
-  if (itemId === 224) {
+  if (itemId === 1394) {
+    return { labelEs: "Entrar al Templo de Bahamut", labelEn: "Enter Bahamut Temple", iconFile: "dragonnest.png" };
+  }
+  if (itemId === 373) {
+    return { labelEs: "Abrir Máquina del Clima", labelEn: "Open Weather Machine", iconFile: "weather.png" };
+  }
+  if (itemId === 266 || itemId === 352) {
+    return { labelEs: "Abrir Mercado de Aliados", labelEn: "Open Allies Market", iconFile: "market.png" };
+  }
+  if (itemId === 224 || itemId === 343) {
     return { labelEs: "Abrir Puerto", labelEn: "Open Harbor", iconFile: "harbour.png" };
   }
-  if (itemId === 299) {
+  if (itemId === 299 || itemId === 344) {
     return { labelEs: "Abrir Torre Zepelín", labelEn: "Open Zeppelin Tower", iconFile: "zeppelin.png" };
   }
-  if (itemId === 1345 || itemId === 1346 || itemId === 1394) {
-    return { labelEs: "Gestionar Edificio Especial", labelEn: "Manage Special Building", iconFile: "dragonnest.png" };
+  if (itemId === 1345 || itemId === 1346) {
+    return { labelEs: "Entrar al Edificio de Dragones", labelEn: "Enter Dragon Facility", iconFile: "dragonnest.png" };
+  }
+  if (subcat === 139) {
+    return { labelEs: "Entrar al Edificio Especial", labelEn: "Enter Special Building", iconFile: "allies.png" };
   }
   return null;
 }

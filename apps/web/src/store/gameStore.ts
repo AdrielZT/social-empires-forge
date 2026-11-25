@@ -9,7 +9,15 @@ export type PlayMode = "village" | "quest" | "survival" | "pvp" | "visit";
 
 export type CursorTool = "normal" | "bulldoze" | "box_select";
 
-export type ActiveModal = null | "shop" | "worldMap" | "systems" | "empires";
+export type ActiveModal = null | "shop" | "worldMap" | "systems" | "empires" | "collections";
+
+export interface SpecialInteriorTarget {
+  itemId: number;
+  subcatFunctional: number;
+  tx: number;
+  ty: number;
+  name: string;
+}
 
 export interface LevelUpNotice {
   level: number;
@@ -167,6 +175,8 @@ interface GameStoreState {
   levelUpQueue: LevelUpNotice[];
   activeNestModal: NestModalTarget | null;
   collectPickerTarget: CollectPickerTarget | null;
+  specialInteriorTarget: SpecialInteriorTarget | null;
+  expandModalExpId: number | null;
   visitingNeighbor: VisitingNeighborState | null;
 
   // Interactive tools & QoL control groups (1..9)
@@ -194,6 +204,8 @@ interface GameStoreState {
   dismissLevelUp: () => void;
   setActiveNestModal: (target: NestModalTarget | null) => void;
   setCollectPickerTarget: (target: CollectPickerTarget | null) => void;
+  setSpecialInteriorTarget: (target: SpecialInteriorTarget | null) => void;
+  setExpandModalExpId: (expId: number | null) => void;
   setVisitingNeighbor: (neighbor: VisitingNeighborState | null) => void;
   setPlacingItemId: (id: number | null) => void;
   setMovingEntityUid: (uid: number | null) => void;
@@ -298,6 +310,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   levelUpQueue: [],
   activeNestModal: null,
   collectPickerTarget: null,
+  specialInteriorTarget: null,
+  expandModalExpId: null,
   visitingNeighbor: null,
 
   placingItemId: null,
@@ -352,6 +366,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     })),
   setActiveNestModal: (activeNestModal) => set({ activeNestModal }),
   setCollectPickerTarget: (collectPickerTarget) => set({ collectPickerTarget }),
+  setSpecialInteriorTarget: (specialInteriorTarget) => set({ specialInteriorTarget }),
+  setExpandModalExpId: (expandModalExpId) => set({ expandModalExpId }),
   setVisitingNeighbor: (visitingNeighbor) => set({ visitingNeighbor }),
   setPlacingItemId: (placingItemId) =>
     set({

@@ -39,6 +39,7 @@ export interface RenderEntityData {
   team?: "player" | "enemy" | "neutral";
   limitRatio?: number;
   collectReady?: boolean;
+  collectType?: string;
   buildingVisualState?: "idle" | "working_male" | "working_female" | "ready_male" | "ready_female" | "loop";
   statusBadge?: "collect" | "zzz" | "ready_nest" | null;
   biomeIndex?: number;
@@ -132,6 +133,7 @@ export interface IsoRendererCallbacks {
     hitEntity: RenderEntityData | null,
     modifiers?: ClickModifiers
   ) => void;
+  onExpansionClick?: (expId: number) => void;
   onEscape?: () => void;
   onTickFrame?: (dtMs: number) => void;
 }
@@ -228,6 +230,7 @@ export class IsoRenderer {
   private readonly worldRoot = new Container();
   private readonly terrainLayer = new Container();
   private readonly gridLayer = new Graphics();
+  private readonly expansionMarkersLayer = new Container();
   private readonly hoverLayer = new Graphics();
   private readonly entityLayer = new Container();
   private readonly flyingLayer = new Container();
@@ -321,6 +324,7 @@ export class IsoRenderer {
 
     this.worldRoot.addChild(this.terrainLayer);
     this.worldRoot.addChild(this.gridLayer);
+    this.worldRoot.addChild(this.expansionMarkersLayer);
     this.worldRoot.addChild(this.hoverLayer);
     this.worldRoot.addChild(this.entityLayer);
     this.worldRoot.addChild(this.flyingLayer);
@@ -552,6 +556,106 @@ export class IsoRenderer {
       slot.sprite.tint = owned ? 0xffffff : 0xb2c29b;
       slot.sprite.alpha = owned ? 1.0 : 0.72;
     }
+
+    // Rebuild canonical `btnBuyExpandTileMC` ("En venta / Clic para comprar") signs on adjacent locked quadrants
+    for (const child of this.expansionMarkersLayer.removeChildren()) {
+      child.destroy({ children: true });
+    }
+    const ownedCoords = new Set<string>();
+    for (const slot of this.terrainSprites) {
+      if (this.ownedExpansions.has(slot.expId)) {
+        ownedCoords.add(`${slot.col},${slot.row}`);
+      }
+    }
+    const dirs = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1]
+    ] as const;
+
+    for (const slot of this.terrainSprites) {
+      if (this.ownedExpansions.has(slot.expId)) continue;
+      const isAdjacent = dirs.some(([dc, dr]) => ownedCoords.has(`${slot.col + dc},${slot.row + dr}`));
+      if (!isAdjacent) continue;
+
+      const centerTx = slot.col * EXPANSION_SIZE_TILES + EXPANSION_SIZE_TILES * 0.5;
+      const centerTy = slot.row * EXPANSION_SIZE_TILES + EXPANSION_SIZE_TILES * 0.5;
+      const pos = tileToScreen(centerTx, centerTy);
+
+      const sign = new Container();
+      sign.x = pos.x;
+      sign.y = pos.y;
+      sign.eventMode = "static";
+      sign.cursor = "pointer";
+
+      // Subtle dashed golden boundary diamond for the buyable 20x20 expansion
+      const c0 = tileToScreen(slot.col * EXPANSION_SIZE_TILES, slot.row * EXPANSION_SIZE_TILES);
+      const c1 = tileToScreen((slot.col + 1) * EXPANSION_SIZE_TILES, slot.row * EXPANSION_SIZE_TILES);
+      const c2 = tileToScreen((slot.col + 1) * EXPANSION_SIZE_TILES, (slot.row + 1) * EXPANSION_SIZE_TILES);
+      const c3 = tileToScreen(slot.col * EXPANSION_SIZE_TILES, (slot.row + 1) * EXPANSION_SIZE_TILES);
+      const border = new Graphics();
+      border
+        .moveTo(c0.x - pos.x, c0.y - pos.y)
+        .lineTo(c1.x - pos.x, c1.y - pos.y)
+        .lineTo(c2.x - pos.x, c2.y - pos.y)
+        .lineTo(c3.x - pos.x, c3.y - pos.y)
+        .closePath()
+        .fill({ color: 0xfacc15, alpha: 0.05 })
+        .stroke({ width: 2.5, color: 0xfde047, alpha: 0.45 });
+      sign.addChild(border);
+
+      // Wooden post + classic riveted gold/wood placard (`btnBuyExpandTileMC`)
+      const bg = new Graphics();
+      bg.roundRect(-7, 16, 14, 24, 3).fill({ color: 0x5c3618 }).stroke({ width: 1.5, color: 0x2b1506 });
+      bg.roundRect(-72, -24, 144, 46, 10)
+        .fill({ color: 0x3b210e, alpha: 0.94 })
+        .stroke({ width: 2.5, color: 0xfbbf24 });
+      bg.roundRect(-68, -20, 136, 38, 7).fill({ color: 0x522e14, alpha: 0.9 });
+      sign.addChild(bg);
+
+      const title = new Text({
+        text: "EN VENTA",
+        style: {
+          fontFamily: "Nunito, Arial Rounded MT Bold, sans-serif",
+          fontSize: 13,
+          fontWeight: "900",
+          fill: 0xfef08a,
+          stroke: { color: 0x1a0c04, width: 3 }
+        }
+      });
+      title.anchor.set(0.5, 0.5);
+      title.y = -9;
+      sign.addChild(title);
+
+      const sub = new Text({
+        text: `Clic para expandir (#${slot.expId})`,
+        style: {
+          fontFamily: "Nunito, sans-serif",
+          fontSize: 10,
+          fontWeight: "700",
+          fill: 0x86efac,
+          stroke: { color: 0x1a0c04, width: 2 }
+        }
+      });
+      sub.anchor.set(0.5, 0.5);
+      sub.y = 9;
+      sign.addChild(sub);
+
+      const expId = slot.expId;
+      sign.on("pointerover", () => {
+        sign.scale.set(1.06);
+      });
+      sign.on("pointerout", () => {
+        sign.scale.set(1.0);
+      });
+      sign.on("pointertap", (ev) => {
+        ev.stopPropagation();
+        this.callbacks.onExpansionClick?.(expId);
+      });
+
+      this.expansionMarkersLayer.addChild(sign);
+    }
   }
 
   private redrawGrid(): void {
@@ -766,7 +870,7 @@ export class IsoRenderer {
     const yTop = Math.round(vis.spriteTopOffset);
 
     const badge = d.statusBadge ?? (d.collectReady ? "collect" : null);
-    const sig = `${Math.round(d.hp)}/${d.maxHp}|${showHp ? 1 : 0}|${isSel ? 1 : 0}|${d.team}|${badge ?? ""}|${d.frozen ? 1 : 0}|${d.poisoned ? 1 : 0}|${d.shielded ? 1 : 0}|${Math.round((d.limitRatio ?? 0) * 20)}|${yTop}`;
+    const sig = `${Math.round(d.hp)}/${d.maxHp}|${showHp ? 1 : 0}|${isSel ? 1 : 0}|${d.team}|${badge ?? ""}|${d.collectType ?? ""}|${d.frozen ? 1 : 0}|${d.poisoned ? 1 : 0}|${d.shielded ? 1 : 0}|${Math.round((d.limitRatio ?? 0) * 20)}|${yTop}`;
     if (vis.lastOverlaySig === sig) return;
     vis.lastOverlaySig = sig;
 
@@ -823,12 +927,65 @@ export class IsoRenderer {
     if (vis.collectBadge.visible) {
       const g = vis.collectBadge;
       g.clear();
-      const yOff = -yTop - 18;
+      const yOff = -yTop - 22;
       if (badge === "collect") {
-        g.circle(0, yOff, 12)
-          .fill({ color: 0xfacc15 })
-          .stroke({ width: 2.5, color: 0x78350f });
-        g.circle(-2.5, yOff - 2.5, 3.8).fill({ color: 0xfef9c3, alpha: 0.8 });
+        // Canonical `IconCollect.as` floating resource bubble with pointer arrow & resource glyph
+        const ct = (d.collectType || "g").toLowerCase();
+        const ringFill =
+          ct === "w"
+            ? 0x92400e
+            : ct === "s"
+              ? 0x64748b
+              : ct === "f"
+                ? 0x16a34a
+                : ct === "c"
+                  ? 0x059669
+                  : ct === "x" || ct === "xp"
+                    ? 0x0284c7
+                    : 0xd97706;
+        // Soft glow halo
+        g.circle(0, yOff, 19).fill({ color: 0xfef08a, alpha: 0.22 });
+        // Pointer triangle underneath
+        g.moveTo(-6, yOff + 12)
+          .lineTo(6, yOff + 12)
+          .lineTo(0, yOff + 20)
+          .closePath()
+          .fill({ color: 0xfde047 })
+          .stroke({ width: 1.5, color: 0x78350f });
+        // Outer golden rim + resource-colored medallion
+        g.circle(0, yOff, 15)
+          .fill({ color: ringFill })
+          .stroke({ width: 2.8, color: 0xfde047 });
+        g.circle(0, yOff, 11.5).stroke({ width: 1, color: 0xffffff, alpha: 0.45 });
+
+        if (ct === "w") {
+          // Wood log icon
+          g.roundRect(-8, yOff - 3.5, 16, 7, 3).fill({ color: 0xd97706 }).stroke({ width: 1.4, color: 0x451a03 });
+          g.circle(5.5, yOff, 3).fill({ color: 0xfde68a }).stroke({ width: 1, color: 0x78350f });
+        } else if (ct === "s") {
+          // Stone block icon
+          g.moveTo(-7, yOff + 5)
+            .lineTo(-5, yOff - 5)
+            .lineTo(4, yOff - 6)
+            .lineTo(8, yOff + 1)
+            .lineTo(4, yOff + 6)
+            .closePath()
+            .fill({ color: 0xe2e8f0 })
+            .stroke({ width: 1.5, color: 0x334155 });
+        } else if (ct === "f") {
+          // Food / Wheat sheaf icon
+          g.ellipse(-3, yOff - 2, 3.2, 6.2).fill({ color: 0xfde047 }).stroke({ width: 1.2, color: 0x854d0e });
+          g.ellipse(3, yOff - 2, 3.2, 6.2).fill({ color: 0xfacc15 }).stroke({ width: 1.2, color: 0x854d0e });
+          g.moveTo(0, yOff + 2).lineTo(0, yOff + 8).stroke({ width: 2.2, color: 0x86efac });
+        } else if (ct === "c") {
+          // Cash bill icon
+          g.roundRect(-8, yOff - 5, 16, 10, 2).fill({ color: 0x4ade80 }).stroke({ width: 1.5, color: 0x064e3b });
+          g.circle(0, yOff, 3).fill({ color: 0xfef08a });
+        } else {
+          // Gold coin icon
+          g.circle(0, yOff, 8.5).fill({ color: 0xfacc15 }).stroke({ width: 1.8, color: 0x78350f });
+          g.circle(-2, yOff - 2, 2.8).fill({ color: 0xfef9c3, alpha: 0.9 });
+        }
       } else if (badge === "zzz") {
         // Canonical `PopupCollect.addIconZZ` / `NestsManager` idle-attention bubble
         g.roundRect(-14, yOff - 10, 28, 20, 8)
@@ -842,7 +999,7 @@ export class IsoRenderer {
           .stroke({ width: 2.4, color: 0xfef08a });
       } else if (badge === "ready_nest") {
         // Ready-to-hatch / ready-to-care nest star badge
-        g.circle(0, yOff, 12)
+        g.circle(0, yOff, 13)
           .fill({ color: 0x10b981 })
           .stroke({ width: 2.5, color: 0xfef08a });
         g.moveTo(0, yOff - 6)
@@ -957,6 +1114,9 @@ export class IsoRenderer {
 
       if (vis.atlas) {
         this.updateSpriteAnimation(vis, dtSec);
+      }
+      if (vis.collectBadge.visible) {
+        vis.collectBadge.y = Math.sin(now * 0.0055 + vis.data.uid) * 5.5;
       }
     }
     this.visibleCount = visible;
@@ -1445,6 +1605,7 @@ export class IsoRenderer {
   private pickEntityAtWorld(wx: number, wy: number): RenderEntityData | null {
     const unitHits: EntityVisual[] = [];
     const bldgHits: EntityVisual[] = [];
+    const clickTile = screenToTile(wx, wy);
 
     for (const vis of this.visuals.values()) {
       if (!vis.container.visible) continue;
@@ -1452,8 +1613,8 @@ export class IsoRenderer {
       if (sp.texture === Texture.EMPTY) continue;
 
       if (vis.data.type === "u") {
-        const rawW = Math.max(58, Math.abs(sp.width) + 16);
-        const rawH = Math.max(78, Math.abs(sp.height) + 16);
+        const rawW = Math.max(52, Math.abs(sp.width) + 12);
+        const rawH = Math.max(70, Math.abs(sp.height) + 12);
         const effAnchorX = sp.scale.x < 0 ? 1 - sp.anchor.x : sp.anchor.x;
         const x0 = vis.container.x - rawW * effAnchorX;
         const y0 = vis.container.y - rawH * Math.max(0.75, sp.anchor.y);
@@ -1461,14 +1622,28 @@ export class IsoRenderer {
           unitHits.push(vis);
         }
       } else {
+        // 1. Exact isometric footprint diamond check `[tx, tx + width) x [ty, ty + height)`
+        const inFootprint =
+          clickTile.tx >= vis.data.tx - 0.15 &&
+          clickTile.tx <= vis.data.tx + vis.data.width + 0.15 &&
+          clickTile.ty >= vis.data.ty - 0.15 &&
+          clickTile.ty <= vis.data.ty + vis.data.height + 0.15;
+
+        if (inFootprint) {
+          bldgHits.push(vis);
+          continue;
+        }
+
+        // 2. Tightened visual body core (trims wide transparent padding and tall spire overhangs)
         const fullW = Math.abs(sp.width);
         const fullH = Math.abs(sp.height);
-        const padX = fullW > 140 ? fullW * 0.12 : 0;
+        const padX = fullW * 0.3;
+        const padTop = fullH * 0.25;
         const x0 = vis.container.x - fullW * sp.anchor.x + padX;
         const x1 = vis.container.x + fullW * (1 - sp.anchor.x) - padX;
-        const y0 = vis.container.y - fullH * sp.anchor.y;
-        const y1 = vis.container.y + fullH * (1 - sp.anchor.y);
-        if (wx >= x0 && wx <= x1 && wy >= y0 && wy <= y1) {
+        const y0 = vis.container.y - fullH * sp.anchor.y + padTop;
+        const y1 = vis.container.y + fullH * (1 - sp.anchor.y) - fullH * 0.05;
+        if (x1 > x0 && y1 > y0 && wx >= x0 && wx <= x1 && wy >= y0 && wy <= y1) {
           bldgHits.push(vis);
         }
       }

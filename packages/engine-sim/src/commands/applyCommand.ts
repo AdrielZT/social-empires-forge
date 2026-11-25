@@ -1265,6 +1265,168 @@ export function applyCommand(
       return { ok: true, events };
     }
 
+    case "soul_mixer_mix": {
+      // Canonical `PopupSoulMixer.as`: fuse 2 unit souls into a resulting special unit
+      const unitId1 = toInt(args[0], 0);
+      const unitId2 = toInt(args[1], 0);
+      const resultUnitId = toInt(args[2], 0);
+      const isInstantAdmin = toInt(args[3], 0) === 1;
+      if (unitId1 <= 0 || unitId2 <= 0 || resultUnitId <= 0) {
+        return { ok: false, error: "Invalid soul mixer units", events };
+      }
+      const mixDurationSec = isInstantAdmin ? 0 : 120;
+      const ps = save.privateState as unknown as Record<string, unknown>;
+      ps.soulMixer = {
+        unit1: unitId1,
+        unit2: unitId2,
+        resultUnitId,
+        startedAt: ctx.nowSec,
+        readyAt: ctx.nowSec + mixDurationSec,
+        powerUpLevel: 0
+      };
+      return { ok: true, events };
+    }
+
+    case "soul_mixer_claim": {
+      const speedUpCash = toInt(args[0], 0);
+      const ps = save.privateState as unknown as Record<string, unknown>;
+      const sm = ps.soulMixer as
+        | { unit1: number; unit2: number; resultUnitId: number; startedAt: number; readyAt: number }
+        | undefined;
+      if (!sm || !sm.resultUnitId) {
+        return { ok: false, error: "No active Soul Mixer fusion", events };
+      }
+      if (ctx.nowSec < sm.readyAt) {
+        if (speedUpCash > 0) {
+          if (!debitResource(bag, "c", speedUpCash)) {
+            return { ok: false, error: "Insufficient cash to speed up Soul Mixer", events };
+          }
+          commitBag(save, map, bag);
+        } else {
+          return { ok: false, error: "Soul Mixer fusion not ready yet", events };
+        }
+      }
+      const rewardId = sm.resultUnitId;
+      const spawnTx = toInt(args[1], 50);
+      const spawnTy = toInt(args[2], 50);
+      map.items.push([rewardId, spawnTx, spawnTy, 4, ctx.nowSec, 0, [], {}]);
+      ps.soulMixer = null;
+      addXp(save, map, 150, ctx, events);
+      events.push({ type: "item_placed", itemId: rewardId, tx: spawnTx, ty: spawnTy });
+      return { ok: true, events };
+    }
+
+    case "bahamut_temple_step": {
+      // Canonical `PopupBahamutSupremeInvocationTemple.as:137-205`
+      const stepIdx = toInt(args[0], 0);
+      const freeAdmin = toInt(args[1], 0) === 1;
+      const ps = save.privateState as unknown as Record<string, unknown>;
+      const completed = Array.isArray(ps.bahamutTempleSteps)
+        ? (ps.bahamutTempleSteps as number[])
+        : [];
+      if (!completed.includes(stepIdx)) {
+        if (!freeAdmin) {
+          if (stepIdx === 4) {
+            const curMana = Number(save.privateState.mana ?? 0);
+            if (curMana < 50) {
+              return { ok: false, error: "Insufficient mana for Bahamut Temple step 4", events };
+            }
+            save.privateState.mana = curMana - 50;
+          } else {
+            const stepCosts: Record<number, { type: "g" | "s" | "w" | "f" | "c"; amount: number }> = {
+              0: { type: "g", amount: 100000 },
+              1: { type: "s", amount: 100000 },
+              2: { type: "w", amount: 100000 },
+              3: { type: "f", amount: 100000 },
+              5: { type: "c", amount: 50 }
+            };
+            const cost = stepCosts[stepIdx];
+            if (cost && !debitResource(bag, cost.type, cost.amount)) {
+              return { ok: false, error: `Insufficient ${cost.type} for Bahamut Temple step ${stepIdx}`, events };
+            }
+            commitBag(save, map, bag);
+          }
+        }
+        completed.push(stepIdx);
+        ps.bahamutTempleSteps = completed;
+      }
+      addXp(save, map, 100, ctx, events);
+      return { ok: true, events };
+    }
+
+    case "bahamut_temple_claim": {
+      const freeAdmin = toInt(args[0], 0) === 1;
+      const spawnTx = toInt(args[1], 52);
+      const spawnTy = toInt(args[2], 52);
+      const ps = save.privateState as unknown as Record<string, unknown>;
+      const completed = Array.isArray(ps.bahamutTempleSteps)
+        ? (ps.bahamutTempleSteps as number[])
+        : [];
+      if (!freeAdmin && completed.length < 7) {
+        return { ok: false, error: "Complete all Bahamut Temple steps first", events };
+      }
+      // Canonical `Constants.ID_UNIT_BAHAMUT_SUPREME` (749 or fallback 739/649)
+      const bahamutId = ctx.itemsById.has(749) ? 749 : ctx.itemsById.has(739) ? 739 : 649;
+      map.items.push([bahamutId, spawnTx, spawnTy, 4, ctx.nowSec, 0, [], {}]);
+      ps.bahamutTempleClaimed = true;
+      ps.bahamutTempleSteps = [];
+      addXp(save, map, 500, ctx, events);
+      events.push({ type: "item_placed", itemId: bahamutId, tx: spawnTx, ty: spawnTy });
+      return { ok: true, events };
+    }
+
+    case "collection_unlock_unit": {
+      // Unlock a unit in Unit Collections (`popupCollections.as`): paid with Cash in User Mode, or free + spawnable in Admin Mode
+      const unitId = toInt(args[0], 0);
+      const cashCost = toInt(args[1], 0);
+      const alsoSpawn = toInt(args[2], 0) === 1;
+      const spawnTx = toInt(args[3], 50);
+      const spawnTy = toInt(args[4], 50);
+      if (unitId <= 0) return { ok: false, error: "Invalid unitId", events };
+      if (cashCost > 0) {
+        if (!debitResource(bag, "c", cashCost)) {
+          return { ok: false, error: "Insufficient cash to unlock collection unit", events };
+        }
+        commitBag(save, map, bag);
+      }
+      const ps = save.privateState as unknown as Record<string, unknown>;
+      const unlocked = new Set<number>(
+        Array.isArray(ps.collectedUnits) ? (ps.collectedUnits as number[]).map(Number) : []
+      );
+      unlocked.add(unitId);
+      ps.collectedUnits = Array.from(unlocked);
+      if (alsoSpawn) {
+        map.items.push([unitId, spawnTx, spawnTy, 4, ctx.nowSec, 0, [], {}]);
+        events.push({ type: "item_placed", itemId: unitId, tx: spawnTx, ty: spawnTy });
+      }
+      return { ok: true, events };
+    }
+
+    case "collection_claim_reward": {
+      const colId = toInt(args[0], 0);
+      const rewardUnitId = toInt(args[1], 0);
+      const spawnTx = toInt(args[2], 50);
+      const spawnTy = toInt(args[3], 50);
+      if (colId <= 0 || rewardUnitId <= 0) {
+        return { ok: false, error: "Invalid collection reward", events };
+      }
+      const ps = save.privateState as unknown as Record<string, unknown>;
+      const claimed = new Set<number>(
+        Array.isArray(ps.claimedCollections) ? (ps.claimedCollections as number[]).map(Number) : []
+      );
+      claimed.add(colId);
+      ps.claimedCollections = Array.from(claimed);
+      const unlocked = new Set<number>(
+        Array.isArray(ps.collectedUnits) ? (ps.collectedUnits as number[]).map(Number) : []
+      );
+      unlocked.add(rewardUnitId);
+      ps.collectedUnits = Array.from(unlocked);
+      map.items.push([rewardUnitId, spawnTx, spawnTy, 4, ctx.nowSec, 0, [], {}]);
+      addXp(save, map, 120, ctx, events);
+      events.push({ type: "item_placed", itemId: rewardUnitId, tx: spawnTx, ty: spawnTy });
+      return { ok: true, events };
+    }
+
     default:
       return { ok: false, error: `Unsupported command: ${cmd}`, events };
   }

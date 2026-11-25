@@ -24,26 +24,16 @@ from typing import Any
 from PIL import Image
 from extract_sprites import parse_sprite_timeline, shelf_pack
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CACHE_DIR = REPO_ROOT / ".cache"
 SPRITES_OUT = REPO_ROOT / "assets" / "generated" / "sprites"
 MANIFEST_PATH = REPO_ROOT / "assets" / "generated" / "manifest.json"
+ITEMS_JSON_PATH = REPO_ROOT / "packages" / "game-data" / "data" / "items.json"
 
-# Priority nested-animated buildings (depth >= 2 DefineSprite animations & hybrid vector rigs)
-ANIMATED_SPECIAL_BUILDINGS = [
-    "1233_criadero",
-    "1255_monsternest",
-    "1284_unit_warehouse",
-    "1299_cash_wonder",
-    "1345_dragonrider_training",
-    "1346_dragon_taming",
-    "1394_temple_invocation_bahamut_supreme",
-    "1529_soulMixer",
-    "1226_angelmolino",
-    "1236_molino",
-    "1256_mill",
-    "1463_time_machine",
-]
+# Subcats that use frame-indexed state/biome semantics instead of continuous loop animation
+NON_LOOP_BUILDING_SUBCATS = {2, 3, 4, 122, 123, 125}
 
 MAX_ANIM_FRAMES = 16
 
@@ -77,8 +67,10 @@ def locate_ffdec_jar() -> Path | None:
 
 def inspect_swf_nested_sprite(swf_path: Path) -> tuple[float, int | None, int]:
     """
-    Returns (fps, best_animated_define_sprite_cid, frame_count) for a building SWF.
-    Walks DefineSprite tags and selects the animated nested DefineSprite with the most frames.
+    Returns (fps, composite_building_define_sprite_cid, frame_count) for a building SWF.
+    Walks down from the exported root SymbolClass DefineSprite through single-child
+    orientation wrappers (root -> orient -> composite building) so we always export the
+    FULL animated building rather than an isolated deep particle/smoke sub-sprite.
     """
     raw = swf_path.read_bytes()
     if raw[:3] == b"CWS":
@@ -94,7 +86,7 @@ def inspect_swf_nested_sprite(swf_path: Path) -> tuple[float, int | None, int]:
     fps = max(8.0, min(30.0, fps_raw / 256.0)) if fps_raw > 0 else 24.0
     pos = 8 + rect_bytes + 4
 
-    sprites: dict[int, int] = {}
+    sprites: dict[int, tuple[int, list[list[tuple[int, int, tuple[float, float, float, float, float, float]]]]]] = {}
     symbols: list[tuple[int, str]] = []
     while pos + 2 <= len(data):
         hdr = struct.unpack_from("<H", data, pos)[0]
@@ -111,7 +103,7 @@ def inspect_swf_nested_sprite(swf_path: Path) -> tuple[float, int | None, int]:
         pos += tl
         if tt == 39:
             cid, fcnt, sf = parse_sprite_timeline(td)
-            sprites[cid] = max(fcnt, len(sf))
+            sprites[cid] = (max(fcnt, len(sf)), sf)
         elif tt == 76 and len(td) >= 2:
             n = struct.unpack_from("<H", td, 0)[0]
             p = 2
@@ -130,17 +122,32 @@ def inspect_swf_nested_sprite(swf_path: Path) -> tuple[float, int | None, int]:
         elif tt == 0:
             break
 
-    root_cids = {cid for cid, _ in symbols}
-    # Prefer a non-root DefineSprite with > 2 frames (orientation roots typically have 2 frames)
-    nested_candidates = [(cid, cnt) for cid, cnt in sprites.items() if cid not in root_cids and cnt > 2]
-    if nested_candidates:
-        best_cid, best_cnt = max(nested_candidates, key=lambda x: x[1])
-        return fps, best_cid, best_cnt
+    stem_lower = swf_path.stem.lower()
+    root_cid = next((cid for cid, nm in symbols if cid in sprites and nm.lower() == stem_lower), None)
+    if root_cid is None:
+        root_cid = next((cid for cid, nm in symbols if cid in sprites and cid != 0), None)
+    if root_cid is None:
+        return fps, None, 1
 
-    all_candidates = [(cid, cnt) for cid, cnt in sprites.items() if cnt > 2]
-    if all_candidates:
-        best_cid, best_cnt = max(all_candidates, key=lambda x: x[1])
-        return fps, best_cid, best_cnt
+    cur = root_cid
+    for _ in range(4):
+        fc, sf = sprites[cur]
+        if cur != root_cid and fc > 2:
+            return fps, cur, fc
+        if not sf or not sf[0]:
+            break
+        children = [ch for _, ch, _ in sf[0] if ch in sprites]
+        if len(children) == 1:
+            cur = children[0]
+        else:
+            best = max(((c, sprites[c][0]) for c in children), key=lambda x: x[1], default=(None, 0))
+            if best[0] is not None and best[1] > 2:
+                return fps, best[0], best[1]
+            break
+
+    fc, _ = sprites[cur]
+    if cur != root_cid and fc > 2:
+        return fps, cur, fc
 
     return fps, None, 1
 
@@ -314,6 +321,26 @@ def update_manifest_hashes(patched_ids: list[str]) -> None:
         print(f"[patch-animated-buildings] WARN updating manifest: {exc}")
 
 
+def discover_all_building_sprites() -> list[tuple[str, int]]:
+    """Returns deduplicated (imgName, subcatFunctional) for all non-farm/tree/ranch buildings."""
+    if not ITEMS_JSON_PATH.exists():
+        return []
+    items = json.loads(ITEMS_JSON_PATH.read_text(encoding="utf-8"))
+    by_img: dict[str, int] = {}
+    for item in items:
+        if item.get("type") != "b":
+            continue
+        img = item.get("imgName")
+        subcat = int(item.get("subcatFunctional", 0) or 0)
+        if not img or subcat in NON_LOOP_BUILDING_SUBCATS:
+            continue
+        if "_chained_" in img:
+            continue
+        by_img[img] = subcat
+    priority_subcats = {139, 121, 135, 132}
+    return sorted(by_img.items(), key=lambda kv: (0 if kv[1] in priority_subcats else 1, kv[0]))
+
+
 def main() -> None:
     SPRITES_OUT.mkdir(parents=True, exist_ok=True)
     farms, trees = tag_farm_and_tree_atlases()
@@ -329,29 +356,67 @@ def main() -> None:
         return
 
     force = os.environ.get("SE_ANIM_FORCE") == "1"
-    patched_ids: list[str] = []
-    for sid in ANIMATED_SPECIAL_BUILDINGS:
+    all_buildings = discover_all_building_sprites()
+    to_export: list[tuple[str, Path]] = []
+    tagged_existing = 0
+
+    for sid, _subcat in all_buildings:
         swf = bs_dir / f"{sid}.swf"
         if not swf.exists():
             continue
+        fps, best_cid, fcnt = inspect_swf_nested_sprite(swf)
+        if best_cid is None or fcnt <= 2:
+            continue
+
         atlas_json = SPRITES_OUT / f"{sid}.atlas.json"
-        if not force and atlas_json.exists():
+        needs_export = force or not atlas_json.exists()
+        if not needs_export:
             try:
                 cur = json.loads(atlas_json.read_text(encoding="utf-8"))
-                if cur.get("animMode") == "loop" and len(cur.get("animations", {}).get("f1", {}).get("frames", [])) > 1:
-                    continue
+                cur_frames = cur.get("animations", {}).get("f1", {}).get("frames", [])
+                # Detect broken previous single-child smoke export (e.g. 1529_soulMixer had 122x142 instead of full building)
+                first_meta = cur.get("frames", {}).get(cur_frames[0], {}) if cur_frames else {}
+                too_small = first_meta.get("w", 999) < 150 and sid == "1529_soulMixer"
+                if len(cur_frames) <= 1 or too_small:
+                    needs_export = True
+                elif cur.get("animMode") != "loop":
+                    cur["animMode"] = "loop"
+                    if not cur.get("fps"):
+                        cur["fps"] = round(min(20.0, max(8.0, fps)), 1)
+                    atlas_json.write_text(json.dumps(cur, separators=(",", ":")), encoding="utf-8")
+                    tagged_existing += 1
             except Exception:
-                pass
-        res = export_and_pack_building(sid, swf, ffdec_jar)
-        if res:
-            patched_ids.append(sid)
-            print(
-                f"  patched {sid}: {res['frames']} frames @ {res['fps']}fps "
-                f"({res['bytes'] // 1024} KB, scale={res['scale']})"
-            )
+                needs_export = True
+
+        if needs_export:
+            to_export.append((sid, swf))
+
+    print(
+        f"[patch-animated-buildings] Tagged {tagged_existing} existing multi-frame buildings with animMode=loop; "
+        f"exporting {len(to_export)} nested-animated buildings via FFDec..."
+    )
+
+    patched_ids: list[str] = []
+    if to_export:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futs = {pool.submit(export_and_pack_building, sid, swf, ffdec_jar): sid for sid, swf in to_export}
+            for fut in as_completed(futs):
+                sid = futs[fut]
+                try:
+                    res = fut.result()
+                    if res:
+                        patched_ids.append(sid)
+                        print(
+                            f"  patched {sid}: {res['frames']} frames @ {res['fps']}fps "
+                            f"({res['bytes'] // 1024} KB, scale={res['scale']})"
+                        )
+                except Exception as exc:
+                    print(f"  WARN {sid}: {exc}")
 
     update_manifest_hashes(patched_ids)
-    print(f"[patch-animated-buildings] Done: {len(patched_ids)} animated special buildings patched.")
+    print(
+        f"[patch-animated-buildings] Done: {tagged_existing} tagged + {len(patched_ids)} FFDec-patched."
+    )
 
 
 if __name__ == "__main__":

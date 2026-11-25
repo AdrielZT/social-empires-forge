@@ -24,6 +24,8 @@ import {
   SUBCAT_RESOURCE_STONE,
   computeProducerYield,
   computeSellRefund,
+  getMatchingAnimalBuildingIds,
+  isCapturableAnimalSubcat,
   isEnterableWorkBuildingSubcat,
   isNaturalResourceSubcat,
   type SimEntity,
@@ -166,6 +168,13 @@ export class GameController {
         onBoxSelect: (uids) => this.handleBoxSelect(uids),
         onTileHover: (tx, ty, hit) => this.handleTileHover(tx, ty, hit),
         onTileClick: (tx, ty, button, hit, mods) => void this.handleTileClick(tx, ty, button, hit, mods),
+        onExpansionClick: (expId) => {
+          const st = useGameStore.getState();
+          if (st.playMode === "village") {
+            st.setExpandModalExpId(expId);
+            void this.audio.playSfx(SFX_NAMES.buttonClick, 0.7);
+          }
+        },
         onEscape: () => this.handleEscape(),
         onTickFrame: (dtMs) => this.onAnimationFrame(dtMs)
       },
@@ -960,6 +969,8 @@ export class GameController {
 
   openSpecialBuildingInterior(itemId: number, subcat: number, tx: number, ty: number): boolean {
     const store = useGameStore.getState();
+    const def = store.itemsById.get(itemId);
+    const name = def?.name ?? `Building #${itemId}`;
     if (itemId === 1233) {
       store.setActiveNestModal({ kind: "dragon", tx, ty });
       void this.audio.playSfx(SFX_NAMES.buttonClick, 0.75);
@@ -988,13 +999,125 @@ export class GameController {
       void this.audio.playSfx(SFX_NAMES.buttonClick, 0.75);
       return true;
     }
-    if (SPECIAL_INTERIOR_IDS.has(itemId)) {
-      store.setSystemsTab("specials");
-      store.setActiveModal("systems");
+    // Harbor (224/343), Zeppelin (299/344), Survival Arena (1283) -> World Map / Expeditions
+    if (itemId === 224 || itemId === 343 || itemId === 299 || itemId === 344 || itemId === 1283) {
+      store.setActiveModal("worldMap");
+      void this.audio.playSfx(SFX_NAMES.buttonClick, 0.75);
+      return true;
+    }
+    // Generalized special interactive interior for Soul Mixer (1529), Supreme Bahamut Temple (1394), and ALL subcat=139 buildings
+    if (itemId === 1529 || itemId === 1394 || subcat === 139 || SPECIAL_INTERIOR_IDS.has(itemId)) {
+      store.setSpecialInteriorTarget({ itemId, subcatFunctional: subcat, tx, ty, name });
       void this.audio.playSfx(SFX_NAMES.buttonClick, 0.75);
       return true;
     }
     return false;
+  }
+
+  async soulMixerMix(unitId1: number, unitId2: number, resultUnitId: number): Promise<void> {
+    const store = useGameStore.getState();
+    const ok = await this.sendCommands([
+      { cmd: "soul_mixer_mix", args: [unitId1, unitId2, resultUnitId, store.adminMode ? 1 : 0] }
+    ]);
+    if (ok) {
+      this.audio.playSfx(SFX_NAMES.collect, 0.7);
+      this.notify(
+        store.locale === "es"
+          ? "¡Mezcla de almas iniciada!"
+          : "Soul fusion started!"
+      );
+    }
+  }
+
+  async soulMixerClaim(speedUpCash = 0): Promise<void> {
+    const store = useGameStore.getState();
+    const ok = await this.sendCommands([{ cmd: "soul_mixer_claim", args: [speedUpCash, 50, 50] }]);
+    if (ok) {
+      this.audio.playSfx(SFX_NAMES.levelUp, 0.75);
+      const save = useGameStore.getState().activeSave;
+      if (save) this.loadPersistentVillage(save);
+      this.notify(
+        store.locale === "es"
+          ? "¡Unidad fusionada invocada en tu reino!"
+          : "Fused unit summoned to your kingdom!"
+      );
+    }
+  }
+
+  async bahamutTempleStep(stepIdx: number): Promise<void> {
+    const store = useGameStore.getState();
+    const ok = await this.sendCommands([
+      { cmd: "bahamut_temple_step", args: [stepIdx, store.adminMode ? 1 : 0] }
+    ]);
+    if (ok) {
+      this.audio.playSfx(SFX_NAMES.collect, 0.7);
+      this.notify(
+        store.locale === "es"
+          ? `¡Paso #${stepIdx + 1} del Templo de Bahamut completado!`
+          : `Bahamut Temple step #${stepIdx + 1} completed!`
+      );
+    }
+  }
+
+  async bahamutTempleClaim(): Promise<void> {
+    const store = useGameStore.getState();
+    const ok = await this.sendCommands([
+      { cmd: "bahamut_temple_claim", args: [store.adminMode ? 1 : 0, 52, 52] }
+    ]);
+    if (ok) {
+      this.audio.playSfx(SFX_NAMES.levelUp, 0.85);
+      const save = useGameStore.getState().activeSave;
+      if (save) this.loadPersistentVillage(save);
+      this.notify(
+        store.locale === "es"
+          ? "¡Bahamut Supremo invocado en tu reino!"
+          : "Supreme Bahamut summoned to your kingdom!"
+      );
+    }
+  }
+
+  async unlockCollectionUnit(unitId: number, cashCost: number, alsoSpawn: boolean): Promise<void> {
+    const store = useGameStore.getState();
+    const tx = 48 + Math.floor(Math.random() * 5);
+    const ty = 48 + Math.floor(Math.random() * 5);
+    const ok = await this.sendCommands([
+      { cmd: "collection_unlock_unit", args: [unitId, cashCost, alsoSpawn ? 1 : 0, tx, ty] }
+    ]);
+    if (ok) {
+      this.audio.playSfx(SFX_NAMES.collect, 0.7);
+      if (alsoSpawn) {
+        const save = useGameStore.getState().activeSave;
+        if (save) this.loadPersistentVillage(save);
+      }
+      this.notify(
+        store.locale === "es"
+          ? alsoSpawn
+            ? "¡Unidad reclamada e invocada en el reino!"
+            : "¡Unidad desbloqueada en tu colección!"
+          : alsoSpawn
+            ? "Unit claimed and spawned in your kingdom!"
+            : "Unit unlocked in your collection!"
+      );
+    }
+  }
+
+  async claimCollectionReward(colId: number, rewardUnitId: number): Promise<void> {
+    const store = useGameStore.getState();
+    const tx = 49 + Math.floor(Math.random() * 4);
+    const ty = 49 + Math.floor(Math.random() * 4);
+    const ok = await this.sendCommands([
+      { cmd: "collection_claim_reward", args: [colId, rewardUnitId, tx, ty] }
+    ]);
+    if (ok) {
+      this.audio.playSfx(SFX_NAMES.levelUp, 0.8);
+      const save = useGameStore.getState().activeSave;
+      if (save) this.loadPersistentVillage(save);
+      this.notify(
+        store.locale === "es"
+          ? "¡Recompensa de colección invocada en tu reino!"
+          : "Collection reward summoned to your kingdom!"
+      );
+    }
   }
 
   async hatchNestCreature(kind: "dragon" | "monster", nestTx: number, nestTy: number): Promise<void> {
@@ -2077,6 +2200,7 @@ export class GameController {
         team: e.team,
         limitRatio: e.behavior?.hasLimitBar && e.limitMax > 0 ? e.limitGauge / e.limitMax : 0,
         collectReady: prod ? prod.collectReady : false,
+        collectType: e.collectType,
         buildingVisualState: prod?.visualState,
         statusBadge: prod?.statusBadge ?? null,
         biomeIndex: biomeIdx,

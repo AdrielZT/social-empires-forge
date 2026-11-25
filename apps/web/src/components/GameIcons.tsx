@@ -1,77 +1,62 @@
 import type { ReactNode } from "react";
+import { assetsBaseUrl } from "../api/paths.js";
 
 interface IconProps {
   className?: string;
 }
 
-export function ResourceIcon(props: { type: "g" | "w" | "s" | "f" | "c" | "pop" | "mana" | string; className?: string }) {
-  const cls = props.className ?? "h-4 w-4 shrink-0";
-  switch (props.type) {
-    case "g":
-      return (
-        <svg viewBox="0 0 24 24" className={cls} aria-hidden="true">
-          <circle cx="12" cy="12" r="10" fill="#f59e0b" stroke="#92400e" strokeWidth="2" />
-          <circle cx="12" cy="12" r="6.5" fill="#fde047" stroke="#d97706" strokeWidth="1.2" />
-          <path d="M12 7.5v9M9.5 10.5c0-1.1 1.1-1.8 2.5-1.8s2.5.7 2.5 1.8-1.1 1.6-2.5 1.9-2.5.8-2.5 1.9 1.1 1.8 2.5 1.8 2.5-.7 2.5-1.8" stroke="#92400e" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-        </svg>
-      );
-    case "w":
-      return (
-        <svg viewBox="0 0 24 24" className={cls} aria-hidden="true">
-          <rect x="3" y="9" width="18" height="8" rx="4" fill="#9a5325" stroke="#451a03" strokeWidth="1.8" />
-          <ellipse cx="19" cy="13" rx="2.6" ry="3.8" fill="#e5b37c" stroke="#451a03" strokeWidth="1.4" />
-          <path d="M6 12h9M7 15h7" stroke="#5c2d10" strokeWidth="1.3" strokeLinecap="round" />
-          <rect x="6" y="4.5" width="12" height="5.5" rx="2.5" fill="#b46531" stroke="#451a03" strokeWidth="1.6" />
-        </svg>
-      );
-    case "s":
-      return (
-        <svg viewBox="0 0 24 24" className={cls} aria-hidden="true">
-          <path d="M4 17l3-8 6-4 7 4 1 8-6 3H7z" fill="#94a3b8" stroke="#334155" strokeWidth="1.8" strokeLinejoin="round" />
-          <path d="M7 9l6 2 7-2M13 11l-1 9" stroke="#475569" strokeWidth="1.3" fill="none" />
-          <path d="M7 9l6-4 4 2.5-4 3.5z" fill="#cbd5e1" opacity="0.7" />
-        </svg>
-      );
-    case "f":
-      return (
-        <svg viewBox="0 0 24 24" className={cls} aria-hidden="true">
-          <path d="M16.5 4.5c2.6 2.6 2.8 6.8.2 9.4-1.8 1.8-4.5 2.4-6.9 1.6l-3.3 3.3c-.6.6-1.6.6-2.2 0-.6-.6-.6-1.6 0-2.2l3.3-3.3c-.8-2.4-.2-5.1 1.6-6.9 2.6-2.6 6.8-2.4 9.3-1.9z" fill="#e11d48" stroke="#4c0519" strokeWidth="1.7" strokeLinejoin="round" />
-          <ellipse cx="14.2" cy="8.8" rx="2.8" ry="1.8" transform="rotate(-35 14.2 8.8)" fill="#fda4af" />
-          <circle cx="5.2" cy="18.8" r="1.4" fill="#fef3c7" stroke="#4c0519" strokeWidth="1" />
-        </svg>
-      );
-    case "c":
-      return (
-        <svg viewBox="0 0 24 24" className={cls} aria-hidden="true">
-          <rect x="2.5" y="6" width="19" height="12" rx="2.5" fill="#16a34a" stroke="#14532d" strokeWidth="1.8" />
-          <rect x="5" y="8.5" width="14" height="7" rx="1.2" fill="#4ade80" stroke="#15803d" strokeWidth="1" />
-          <circle cx="12" cy="12" r="2.7" fill="#15803d" />
-          <path d="M12 10.2v3.6" stroke="#dcfce7" strokeWidth="1.4" strokeLinecap="round" />
-        </svg>
-      );
-    case "pop":
-      return (
-        <svg viewBox="0 0 24 24" className={cls} aria-hidden="true">
-          <circle cx="9.5" cy="8.5" r="3.5" fill="#60a5fa" stroke="#1e3a8a" strokeWidth="1.6" />
-          <path d="M3.5 19c0-3.2 2.7-5.5 6-5.5s6 2.3 6 5.5" fill="#3b82f6" stroke="#1e3a8a" strokeWidth="1.6" strokeLinecap="round" />
-          <circle cx="16.5" cy="9.5" r="2.6" fill="#93c5fd" stroke="#1e3a8a" strokeWidth="1.4" />
-          <path d="M15.5 14.2c2.4.4 4.5 2 4.5 4.8" fill="#60a5fa" stroke="#1e3a8a" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-      );
-    case "mana":
-      return (
-        <svg viewBox="0 0 24 24" className={cls} aria-hidden="true">
-          <path d="M12 2.5C12 2.5 5.5 10.2 5.5 14.8a6.5 6.5 0 0013 0C18.5 10.2 12 2.5 12 2.5z" fill="#38bdf8" stroke="#0c4a6e" strokeWidth="1.8" />
-          <path d="M9.5 14.2c0-1.8 1.5-4.3 2.5-5.8.7 1.3 1.4 3.2 1.4 4.8a2.3 2.3 0 01-3.9 1z" fill="#bae6fd" />
-        </svg>
-      );
-    default:
-      return (
-        <svg viewBox="0 0 24 24" className={cls} aria-hidden="true">
-          <circle cx="12" cy="12" r="8" fill="#fbbf24" stroke="#78350f" strokeWidth="2" />
-        </svg>
-      );
+const HUD_RESOURCE_SPRITE: Record<string, string> = {
+  c: "res_1.webp",
+  cash: "res_1.webp",
+  g: "res_2.webp",
+  gold: "res_2.webp",
+  f: "res_3.webp",
+  food: "res_3.webp",
+  w: "res_4.webp",
+  wood: "res_4.webp",
+  s: "res_5.webp",
+  stone: "res_5.webp",
+  p: "res_6.webp",
+  pop: "res_6.webp",
+  x: "res_8.webp",
+  xp: "res_8.webp"
+};
+
+export function ResourceIcon(props: {
+  type: "g" | "w" | "s" | "f" | "c" | "pop" | "mana" | "gold" | "cash" | string;
+  size?: number;
+  className?: string;
+}) {
+  const spriteFile = HUD_RESOURCE_SPRITE[props.type];
+  const style = props.size ? { width: props.size, height: props.size } : undefined;
+  const cls = props.className ?? (props.size ? "object-contain shrink-0 drop-shadow-[0_1px_1px_rgba(0,0,0,0.85)]" : "h-5 w-5 object-contain shrink-0 drop-shadow-[0_1px_1px_rgba(0,0,0,0.85)]");
+
+  if (spriteFile) {
+    return (
+      <img
+        src={`${assetsBaseUrl()}/ui/hud/${spriteFile}`}
+        alt={props.type}
+        style={style}
+        className={cls}
+        draggable={false}
+      />
+    );
   }
+
+  if (props.type === "mana") {
+    return (
+      <svg viewBox="0 0 24 24" style={style} className={cls} aria-hidden="true">
+        <path d="M12 2.5C12 2.5 5.5 10.2 5.5 14.8a6.5 6.5 0 0013 0C18.5 10.2 12 2.5 12 2.5z" fill="#38bdf8" stroke="#0c4a6e" strokeWidth="1.8" />
+        <path d="M9.5 14.2c0-1.8 1.5-4.3 2.5-5.8.7 1.3 1.4 3.2 1.4 4.8a2.3 2.3 0 01-3.9 1z" fill="#bae6fd" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" style={style} className={cls} aria-hidden="true">
+      <circle cx="12" cy="12" r="8" fill="#fbbf24" stroke="#78350f" strokeWidth="2" />
+    </svg>
+  );
 }
 
 export function HudIcon(props: {

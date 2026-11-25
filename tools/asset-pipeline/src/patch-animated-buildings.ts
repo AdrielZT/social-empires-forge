@@ -55,15 +55,19 @@ function main(): void {
 
   const jar = resolveFfdecJar();
   const pyBin = process.platform === "win32" ? "python" : "python3";
-  const pyScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "patch_animated_buildings.py");
-  execFileSync(pyBin, [pyScript], {
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      SE_FFDEC_JAR: jar,
-      SE_UPSTREAM_DIR: process.env.SE_UPSTREAM_DIR ?? resolvedUpstream
+  const srcDir = path.dirname(fileURLToPath(import.meta.url));
+  const sharedEnv = {
+    ...process.env,
+    SE_FFDEC_JAR: jar,
+    SE_UPSTREAM_DIR: process.env.SE_UPSTREAM_DIR ?? resolvedUpstream
+  };
+
+  for (const scriptName of ["extract_hud_ui.py", "patch_animated_buildings.py", "patch_vector_units.py"]) {
+    const pyScript = path.join(srcDir, scriptName);
+    if (fs.existsSync(pyScript)) {
+      execFileSync(pyBin, [pyScript], { stdio: "inherit", env: sharedEnv });
     }
-  });
+  }
 }
 
 main();

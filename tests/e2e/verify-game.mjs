@@ -187,6 +187,14 @@ async function main() {
       throw new Error(`Expected HUD level >= 3 after claiming goals, got ${hudLevel}`);
     }
 
+    // 4b. Open Unit Collections modal and verify 128 collections render cleanly
+    await page.click('[data-testid="btn-collections"]');
+    await page.waitForSelector('[data-testid^="collection-row-"]', { timeout: 8000 });
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: path.join(OUT_DIR, "08_collections_modal.png") });
+    await page.click('[data-testid="modal-close"]');
+    await page.waitForTimeout(250);
+
     // 5. Open World Map & launch a real Quest Battle
     await page.click('[data-testid="btn-worldmap"]');
     await page.waitForTimeout(500);

@@ -12,10 +12,14 @@ import { SystemsModal } from "./components/SystemsModal.js";
 import { LevelUpModal } from "./components/LevelUpModal.js";
 import { NestModal } from "./components/NestModal.js";
 import { PopupCollectModal } from "./components/PopupCollectModal.js";
+import { PopupExpandModal } from "./components/PopupExpandModal.js";
+import { SpecialBuildingModal } from "./components/SpecialBuildingModal.js";
+import { CollectionsModal } from "./components/CollectionsModal.js";
 import { FriendsDock } from "./components/FriendsDock.js";
 import { Minimap } from "./components/Minimap.js";
 import { CornerRivets } from "./components/ClassicFrame.js";
 import { HudIcon, ResourceIcon } from "./components/GameIcons.js";
+import { assetsBaseUrl } from "./api/paths.js";
 
 const ALL_BIOMES: TerrainSkin[] = [
   "terreno",
@@ -49,6 +53,8 @@ export function App() {
   const showGrid = useGameStore((s) => s.showGrid);
   const controlGroups = useGameStore((s) => s.controlGroups);
   const activeModal = useGameStore((s) => s.activeModal);
+  const specialInteriorTarget = useGameStore((s) => s.specialInteriorTarget);
+  const expandModalExpId = useGameStore((s) => s.expandModalExpId);
   const placingItemId = useGameStore((s) => s.placingItemId);
   const movingEntityUid = useGameStore((s) => s.movingEntityUid);
   const castingMagicId = useGameStore((s) => s.castingMagicId);
@@ -65,6 +71,8 @@ export function App() {
   const setSfxEnabled = useGameStore((s) => s.setSfxEnabled);
   const setShowGrid = useGameStore((s) => s.setShowGrid);
   const setActiveModal = useGameStore((s) => s.setActiveModal);
+  const setSpecialInteriorTarget = useGameStore((s) => s.setSpecialInteriorTarget);
+  const setExpandModalExpId = useGameStore((s) => s.setExpandModalExpId);
   const setSystemsTab = useGameStore((s) => s.setSystemsTab);
   const setPlacingItemId = useGameStore((s) => s.setPlacingItemId);
   const setMovingEntityUid = useGameStore((s) => s.setMovingEntityUid);
@@ -468,7 +476,7 @@ export function App() {
             <div className="sp-panel pointer-events-auto relative flex flex-wrap items-center justify-center gap-1 rounded-2xl px-2.5 py-1.5 text-xs font-black">
               <CornerRivets />
 
-              {/* Classic Shop & World Map primary accesses */}
+              {/* Classic Shop, World Map & Unit Collections primary accesses */}
               {playMode === "village" && (
                 <button
                   type="button"
@@ -477,9 +485,14 @@ export function App() {
                     clickSfx();
                     setActiveModal(activeModal === "shop" ? null : "shop");
                   }}
-                  className="sp-btn-gold flex items-center gap-1 whitespace-nowrap rounded-xl px-2.5 py-1.5 cursor-pointer"
+                  className="sp-btn-gold flex items-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-1 cursor-pointer"
                 >
-                  <HudIcon name="shop" className="h-4 w-4 shrink-0" />
+                  <img
+                    src={`${assetsBaseUrl()}/ui/hud/btn_store.webp`}
+                    alt=""
+                    className="h-5 w-auto object-contain drop-shadow-[0_1px_1px_rgba(0,0,0,0.85)]"
+                    draggable={false}
+                  />
                   <span>{t.hud.shop}</span>
                 </button>
               )}
@@ -496,6 +509,21 @@ export function App() {
                 <HudIcon name="map" className="h-4 w-4 shrink-0" />
                 <span>{t.hud.worldMap}</span>
               </button>
+
+              {playMode === "village" && (
+                <button
+                  type="button"
+                  data-testid="btn-collections"
+                  onClick={() => {
+                    clickSfx();
+                    setActiveModal(activeModal === "collections" ? null : "collections");
+                  }}
+                  className="sp-btn-gold flex items-center gap-1 whitespace-nowrap rounded-xl px-2.5 py-1.5 cursor-pointer"
+                >
+                  <ResourceIcon type="xp" size={16} />
+                  <span>{locale === "es" ? "Colecciones" : "Collections"}</span>
+                </button>
+              )}
 
               {playMode !== "visit" && (
                 <button
@@ -717,6 +745,49 @@ export function App() {
       )}
       {activeModal === "worldMap" && <WorldMapModal controller={controllerRef.current} />}
       {activeModal === "systems" && <SystemsModal controller={controllerRef.current} />}
+      {activeModal === "collections" && (
+        <CollectionsModal
+          onUnlockUnit={(unitId, cashCost, alsoSpawn) =>
+            controllerRef.current?.unlockCollectionUnit(unitId, cashCost, alsoSpawn) ?? Promise.resolve()
+          }
+          onClaimReward={(colId, rewardUnitId) =>
+            controllerRef.current?.claimCollectionReward(colId, rewardUnitId) ?? Promise.resolve()
+          }
+          onClose={() => setActiveModal(null)}
+        />
+      )}
+      {specialInteriorTarget && (
+        <SpecialBuildingModal
+          target={specialInteriorTarget}
+          onSoulMixerMix={(u1, u2, resId) =>
+            controllerRef.current?.soulMixerMix(u1, u2, resId) ?? Promise.resolve()
+          }
+          onSoulMixerClaim={(cash) =>
+            controllerRef.current?.soulMixerClaim(cash) ?? Promise.resolve()
+          }
+          onBahamutStep={(idx) =>
+            controllerRef.current?.bahamutTempleStep(idx) ?? Promise.resolve()
+          }
+          onBahamutClaim={() =>
+            controllerRef.current?.bahamutTempleClaim() ?? Promise.resolve()
+          }
+          onOpenSystems={(tab) => {
+            setSystemsTab(tab);
+            setActiveModal("systems");
+          }}
+          onChangeBiome={(b) => setActiveBiome(b as TerrainSkin)}
+          onClose={() => setSpecialInteriorTarget(null)}
+        />
+      )}
+      {expandModalExpId !== null && (
+        <PopupExpandModal
+          expId={expandModalExpId}
+          onExpand={(expId, withCash) =>
+            controllerRef.current?.expandTerritory(expId, withCash) ?? Promise.resolve()
+          }
+          onClose={() => setExpandModalExpId(null)}
+        />
+      )}
       <NestModal controller={controllerRef.current} />
       <PopupCollectModal controller={controllerRef.current} />
       <LevelUpModal
