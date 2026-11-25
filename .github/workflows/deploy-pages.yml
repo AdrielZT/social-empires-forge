@@ -39,7 +39,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: assets/generated
-          key: sef-assets-1.4.07-v1
+          key: sef-assets-1.4.07-v2
 
       - name: Restore or compile game assets (1.4.07)
         env:
@@ -58,6 +58,12 @@ jobs:
               python3 -m pip install --quiet --break-system-packages pillow || python3 -m pip install --quiet pillow
               pnpm assets:pipeline
             fi
+          fi
+
+          if [ ! -f assets/generated/sprites/1233_criadero.atlas.json ] || ! grep -q '"animMode":"loop"' assets/generated/sprites/1233_criadero.atlas.json; then
+            echo "[pages] Patching nested-animated special buildings (Dragon Nest, Monster Nest, Farms)..."
+            python3 -m pip install --quiet --break-system-packages pillow || python3 -m pip install --quiet pillow
+            pnpm assets:patch-animated
           fi
 
           if [ ! -f assets/generated/manifest.json ]; then

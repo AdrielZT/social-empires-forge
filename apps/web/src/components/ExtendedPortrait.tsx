@@ -1,12 +1,19 @@
 import { useMemo } from "react";
 import { getUiStrings } from "@sef/game-data";
-import type { StanceMode } from "@sef/engine-sim";
+import {
+  COLLECT_VARIABLE_IDS,
+  SUBCAT_BUILDING_FARM,
+  SUBCAT_BUILDING_MILL,
+  SUBCAT_BUILDING_MINE,
+  type StanceMode
+} from "@sef/engine-sim";
+import { assetsBaseUrl } from "../api/paths.js";
 import { useGameStore } from "../store/gameStore.js";
 import { CornerRivets } from "./ClassicFrame.js";
 import { ItemThumb } from "./ItemThumb.js";
 import { HudIcon, ResourceIcon } from "./GameIcons.js";
 
-const RESOURCE_NODE_SUBCATS = new Set([2, 3, 4, 125, 126, 127]);
+const RESOURCE_NODE_SUBCATS = new Set([2, 3, 4, 125, 126, 127, 128]);
 
 const TRAINABLE_BY_SUBCAT: Record<number, number[]> = {
   135: [500, 501], // Town Hall -> Villagers
@@ -18,6 +25,58 @@ const TRAINABLE_BY_SUBCAT: Record<number, number[]> = {
 };
 
 const SPECIAL_HOTKEYS = ["Q", "E", "R", "F"];
+
+interface SpecialInteriorConfig {
+  labelEs: string;
+  labelEn: string;
+  iconFile: string;
+}
+
+function getSpecialInteriorConfig(itemId: number, subcat: number): SpecialInteriorConfig | null {
+  if (itemId === 1233) {
+    return { labelEs: "Entrar al Nido de Dragones", labelEn: "Enter Dragon Nest", iconFile: "dragonnest.png" };
+  }
+  if (itemId === 1255) {
+    return { labelEs: "Entrar al Nido de Monstruos", labelEn: "Enter Monsters Nest", iconFile: "dragonnest.png" };
+  }
+  if (subcat === 132 || itemId === 23 || itemId === 188 || itemId === 189) {
+    return { labelEs: "Abrir Mercado", labelEn: "Open Market", iconFile: "market.png" };
+  }
+  if (itemId === 486 || itemId === 239) {
+    return { labelEs: "Entrar al Cementerio", labelEn: "Enter Graveyard", iconFile: "graveyard.png" };
+  }
+  if (itemId === 1284) {
+    return { labelEs: "Abrir Almacén de Unidades", labelEn: "Open Unit Warehouse", iconFile: "warehouse.png" };
+  }
+  if (itemId === 416) {
+    return { labelEs: "Abrir Academia de Magia", labelEn: "Open Wizardry Academy", iconFile: "magic.png" };
+  }
+  if (itemId === 1529) {
+    return { labelEs: "Abrir Mezclador de Almas", labelEn: "Open Soul Mixer", iconFile: "soulmixer.png" };
+  }
+  if (itemId === 1463) {
+    return { labelEs: "Abrir Máquina del Tiempo", labelEn: "Open Time Machine", iconFile: "timemachine.png" };
+  }
+  if (itemId === 224) {
+    return { labelEs: "Abrir Puerto", labelEn: "Open Harbor", iconFile: "harbour.png" };
+  }
+  if (itemId === 299) {
+    return { labelEs: "Abrir Torre Zepelín", labelEn: "Open Zeppelin Tower", iconFile: "zeppelin.png" };
+  }
+  if (itemId === 1345 || itemId === 1346 || itemId === 1394) {
+    return { labelEs: "Gestionar Edificio Especial", labelEn: "Manage Special Building", iconFile: "dragonnest.png" };
+  }
+  return null;
+}
+
+function formatSecTimer(sec: number): string {
+  const s = Math.max(0, Math.ceil(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
+  return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
+}
 
 export function ExtendedPortrait(props: {
   onCollect: () => void;
@@ -31,6 +90,9 @@ export function ExtendedPortrait(props: {
   onTriggerLimit: () => void;
   onChangeStance: (stance: StanceMode) => void;
   onStopUnits: () => void;
+  onOpenSpecialInterior: () => void;
+  onOpenCollectPicker: () => void;
+  onPopWorker: (all: boolean) => void;
   onClose: () => void;
 }) {
   const locale = useGameStore((s) => s.locale);
@@ -77,13 +139,27 @@ export function ExtendedPortrait(props: {
   if (!sel || !def) return null;
 
   const isResourceNode = def.type === "b" && RESOURCE_NODE_SUBCATS.has(def.subcatFunctional);
+  const isFarm = def.type === "b" && def.subcatFunctional === SUBCAT_BUILDING_FARM;
+  const isWorkProducer =
+    def.type === "b" &&
+    (def.subcatFunctional === SUBCAT_BUILDING_MINE ||
+      def.subcatFunctional === SUBCAT_BUILDING_MILL ||
+      COLLECT_VARIABLE_IDS.has(def.id));
+  const specialInterior = def.type === "b" ? getSpecialInteriorConfig(def.id, def.subcatFunctional) : null;
+
   const limitPct = sel.limitMax > 0 ? Math.min(100, Math.round((sel.limitGauge / sel.limitMax) * 100)) : 0;
   const limitReady = sel.limitMax > 0 && sel.limitGauge >= sel.limitMax;
+
+  const prodPct =
+    sel.productionDurationSec > 0
+      ? Math.min(100, Math.round((sel.productionElapsedSec / sel.productionDurationSec) * 100))
+      : 0;
+  const prodRemainingSec = Math.max(0, sel.productionDurationSec - sel.productionElapsedSec);
 
   return (
     <aside
       data-testid="extended-portrait"
-      className="sp-panel pointer-events-auto absolute right-3 top-16 z-20 w-80 rounded-2xl p-3.5 text-amber-50"
+      className="sp-panel pointer-events-auto absolute right-3 top-16 z-20 w-80 max-h-[calc(100vh-170px)] overflow-y-auto rounded-2xl p-3.5 text-amber-50"
     >
       <CornerRivets />
       {/* Header */}
@@ -150,6 +226,122 @@ export function ExtendedPortrait(props: {
           </div>
         </div>
       </div>
+
+      {/* Classic `EP_SelfCustomActionBuilding` Special Building Interior Button */}
+      {playMode === "village" && sel.team === "player" && specialInterior && (
+        <button
+          type="button"
+          data-testid="btn-enter-special-building"
+          onClick={props.onOpenSpecialInterior}
+          className="sp-btn-gold mt-2.5 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-black cursor-pointer"
+        >
+          <img
+            src={`${assetsBaseUrl()}/ui/externalized/RecuadroInfo/${specialInterior.iconFile}`}
+            alt=""
+            className="h-6 w-6 rounded object-contain"
+          />
+          <span>{locale === "es" ? specialInterior.labelEs : specialInterior.labelEn}</span>
+        </button>
+      )}
+
+      {/* Canonical `EP_SelfResourceBuilding`: Garrisoned Villagers & Production / 30s Farm Sowing Progress */}
+      {playMode === "village" && sel.team === "player" && (isWorkProducer || isFarm) && (
+        <div data-testid="resource-building-panel" className="sp-inset mt-2.5 rounded-xl p-2.5 text-xs">
+          <div className="flex items-center justify-between font-black text-amber-200">
+            <span>
+              {isFarm
+                ? locale === "es"
+                  ? "Campo de Cultivo"
+                  : "Crop Field"
+                : locale === "es"
+                  ? "Aldeanos trabajando"
+                  : "Working Villagers"}
+            </span>
+            <span className="text-emerald-300">
+              {sel.garrison.length} / {Math.max(1, sel.unitCapacity)}
+            </span>
+          </div>
+
+          {sel.garrison.length === 0 ? (
+            <p className="mt-1 text-[10px] text-amber-100/75 leading-snug">
+              {isFarm
+                ? locale === "es"
+                  ? "Envía un aldeano (Tab) a este campo para que entre a sembrar durante 30 segundos."
+                  : "Send a villager (Tab) to this field to enter and sow for 30 seconds."
+                : locale === "es"
+                  ? "Envía aldeanos (Tab) para que entren dentro del edificio y produzcan recursos."
+                  : "Send villagers (Tab) to enter inside the building and produce resources."}
+            </p>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {/* Show progress bar if farm sowing OR variable producer active */}
+              {sel.productionDurationSec > 0 && (
+                <div>
+                  <div className="flex items-center justify-between text-[10px] font-bold">
+                    <span className="text-amber-100/85">
+                      {sel.collectReady
+                        ? locale === "es"
+                          ? "¡Listo para recolectar!"
+                          : "Ready to collect!"
+                        : isFarm
+                          ? locale === "es"
+                            ? "Sembrando..."
+                            : "Sowing..."
+                          : locale === "es"
+                            ? "Produciendo..."
+                            : "Producing..."}
+                    </span>
+                    <span className="text-amber-300">
+                      {sel.collectReady ? "100%" : formatSecTimer(prodRemainingSec)}
+                    </span>
+                  </div>
+                  <div className="mt-1 h-2.5 w-full overflow-hidden rounded-full border border-amber-500/50 bg-stone-950">
+                    <div
+                      className={`h-full transition-all ${
+                        sel.collectReady ? "bg-amber-400" : "bg-emerald-500"
+                      }`}
+                      style={{ width: `${sel.collectReady ? 100 : prodPct}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Variable producer waiting for production choice */}
+              {isWorkProducer && sel.productionCp === 0 && !sel.collectReady && (
+                <button
+                  type="button"
+                  data-testid="btn-choose-production"
+                  onClick={props.onOpenCollectPicker}
+                  className="sp-btn-gold w-full rounded-lg py-1.5 text-xs font-black cursor-pointer"
+                >
+                  {locale === "es" ? "Elegir Producción (5m / 1h / 4h / 8h)" : "Choose Production (5m / 1h / 4h / 8h)"}
+                </button>
+              )}
+
+              {/* Eject villagers back onto map (`pop_unit`) */}
+              <div className="flex gap-1.5">
+                <button
+                  type="button"
+                  data-testid="btn-pop-worker"
+                  onClick={() => props.onPopWorker(false)}
+                  className="sp-btn-stone flex-1 rounded-lg py-1 text-[10px] font-black cursor-pointer"
+                >
+                  {locale === "es" ? "Sacar 1 aldeano" : "Eject 1"}
+                </button>
+                {sel.garrison.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => props.onPopWorker(true)}
+                    className="sp-btn-stone flex-1 rounded-lg py-1 text-[10px] font-black cursor-pointer"
+                  >
+                    {locale === "es" ? "Sacar todos" : "Eject All"}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Stats */}
       {!isResourceNode && (
@@ -308,6 +500,7 @@ export function ExtendedPortrait(props: {
           {sel.collectReady && (
             <button
               type="button"
+              data-testid="btn-collect-building"
               onClick={props.onCollect}
               className="sp-btn-gold col-span-2 flex items-center justify-center gap-1.5 rounded-lg py-1.5 cursor-pointer"
             >
@@ -347,16 +540,20 @@ export function ExtendedPortrait(props: {
       {def.type === "u" && sel.team === "player" && (
         <p className="sp-inset mt-2 rounded-lg px-2.5 py-1.5 text-[10px] leading-snug text-emerald-200/90">
           {locale === "es"
-            ? "Clic izq./der.: mover, talar/recolectar o atacar · Ctrl+1..9 guarda grupo · Doble clic selecciona iguales."
-            : "Left/Right click: move, harvest, or attack · Ctrl+1..9 saves squad group · Double-click selects same type."}
+            ? "Clic izq./der.: mover, talar/recolectar, entrar en minas/granjas o atacar · Ctrl+1..9 guarda grupo."
+            : "Left/Right click: move, harvest, enter mines/farms, or attack · Ctrl+1..9 saves squad group."}
         </p>
       )}
 
       {isResourceNode && (
         <p className="sp-inset mt-2 rounded-lg px-2.5 py-1.5 text-[10px] leading-snug text-amber-200/90">
-          {locale === "es"
-            ? `Recurso recolectable (+${sel.collectAmount}). Selecciona un aldeano (Tab) y haz clic aquí.`
-            : `Harvestable resource (+${sel.collectAmount}). Select a villager (Tab) and click here.`}
+          {def.subcatFunctional === 128
+            ? locale === "es"
+              ? "Mena agotada en regeneración (3 horas para volver a brotar)."
+              : "Depleted ore regenerating (3 hours until restored)."
+            : locale === "es"
+              ? `Recurso recolectable (+${sel.collectAmount}). Selecciona un aldeano (Tab) y haz clic aquí.`
+              : `Harvestable resource (+${sel.collectAmount}). Select a villager (Tab) and click here.`}
         </p>
       )}
 

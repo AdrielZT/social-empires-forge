@@ -1,14 +1,31 @@
 import {
   tileToExpansionId,
   type CommandPayload,
+  type RawMapItemTuple,
   type SaveFile,
   type TerrainSkin
 } from "@sef/shared-types";
 import {
   BattleEngine,
+  COLLECT_MINUTES,
+  COLLECT_VARIABLE_IDS,
   FixedStepClock,
+  ID_BUILDING_REGEN_GOLD,
+  ID_BUILDING_REGEN_STONE,
+  NEST_STEP_COOLDOWN_SEC,
+  NEST_TOTAL_STEPS,
   OccupancyGrid,
+  REGEN_ORE_DURATION_SEC,
+  SUBCAT_BUILDING_FARM,
+  SUBCAT_BUILDING_MILL,
+  SUBCAT_BUILDING_MINE,
   SUBCAT_BUILDING_TOWNHALL,
+  SUBCAT_RESOURCE_GOLD,
+  SUBCAT_RESOURCE_STONE,
+  computeProducerYield,
+  computeSellRefund,
+  isEnterableWorkBuildingSubcat,
+  isNaturalResourceSubcat,
   type SimEntity,
   type SimVisualEvent,
   type StanceMode
@@ -23,13 +40,27 @@ import {
 import { AudioManager, SFX_NAMES } from "@sef/engine-audio";
 import { gameApi } from "../api/gameApi.js";
 import { assetsBaseUrl, audioBaseUrl } from "../api/paths.js";
-import { useGameStore, type PlayMode, type SelectedEntitySummary } from "../store/gameStore.js";
+import {
+  useGameStore,
+  type LevelUpNotice,
+  type SelectedEntitySummary
+} from "../store/gameStore.js";
 
-const RESOURCE_SUBCATS = new Set([2, 3, 4, 122, 125, 126, 127]);
-const WILD_NEUTRAL_SUBCATS = new Set([74, 75, 125, 126, 127, 811]);
+const WILD_NEUTRAL_SUBCATS = new Set([74, 75, 125, 126, 127, 128, 811]);
+const ALL_BIOME_SKINS: TerrainSkin[] = [
+  "terreno",
+  "terrenodesierto",
+  "terrenohielo",
+  "terrenomar2",
+  "terrenomineral",
+  "terrenonubes",
+  "terrenoselva",
+  "islandbigboss3"
+];
+const SPECIAL_INTERIOR_IDS = new Set([23, 188, 189, 224, 239, 299, 416, 486, 1233, 1255, 1284, 1345, 1346, 1394, 1463, 1529]);
 
-function isHarvestableResourceSubcat(subcat: number): boolean {
-  return RESOURCE_SUBCATS.has(subcat);
+function isWorkableOrHarvestableTarget(subcat: number, itemId: number): boolean {
+  return isNaturalResourceSubcat(subcat) || isEnterableWorkBuildingSubcat(subcat) || COLLECT_VARIABLE_IDS.has(itemId);
 }
 
 function isVillagerEntity(ent: SimEntity): boolean {
@@ -43,6 +74,12 @@ function svgCursor(svg: string, hotX = 6, hotY = 6, fallback = "pointer"): strin
 const CURSORS = {
   default: "grab",
   boxSelect: "crosshair",
+  bulldoze: svgCursor(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><circle cx="14" cy="14" r="11" fill="rgba(220,38,38,0.88)" stroke="#fef08a" stroke-width="2"/><path d="M9 9l10 10M19 9L9 19" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round"/></svg>`,
+    14,
+    14,
+    "not-allowed"
+  ),
   attack: svgCursor(
     `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><path d="M23 4l-11 11-3-3 11-11h3v3z" fill="#ef4444" stroke="#450a0a" stroke-width="1.6"/><path d="M8 14l6 6-2.5 2.5-2-2-3.5 3.5-2-2 3.5-3.5-2-2L8 14z" fill="#fbbf24" stroke="#451a03" stroke-width="1.5"/></svg>`,
     4,
@@ -112,8 +149,8 @@ export class GameController {
   private packetSeq = 1;
   private survivalWaveTimer = 0;
   private lastHudSyncAt = 0;
-  private saveTupleToUid = new Map<number, number>(); // entity uid -> index in save.maps[0].items
-  private collectedCooldownUntil = new Map<number, number>(); // building uid -> timestamp ms
+  private lastRegenCheckAt = 0;
+  private collectedCooldownUntil = new Map<number, number>(); // passive building uid -> timestamp ms
   private lastGroupRecallKey = -1;
   private lastGroupRecallAt = 0;
   private idleVillagerCycleIdx = 0;
@@ -146,28 +183,56 @@ export class GameController {
     }
   }
 
+  private findSaveTuple(itemId: number, tx: number, ty: number): RawMapItemTuple | null {
+    const map0 = useGameStore.getState().activeSave?.maps[0];
+    if (!map0) return null;
+    const rtx = Math.round(tx);
+    const rty = Math.round(ty);
+    for (const tuple of map0.items) {
+      if (tuple[0] === itemId && tuple[1] === rtx && tuple[2] === rty) {
+        return tuple;
+      }
+    }
+    return null;
+  }
+
+  private findFreeTileNear(originTx: number, originTy: number, maxRadius = 4): { tx: number; ty: number } {
+    for (let r = 1; r <= maxRadius; r++) {
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dy = -r; dy <= r; dy++) {
+          const cx = originTx + dx;
+          const cy = originTy + dy;
+          if (this.grid.inBounds(cx, cy) && this.grid.get(cx, cy) === 0) {
+            return { tx: cx, ty: cy };
+          }
+        }
+      }
+    }
+    return { tx: Math.min(98, originTx + 1), ty: Math.min(98, originTy + 1) };
+  }
+
   loadPersistentVillage(save: SaveFile): void {
     const store = useGameStore.getState();
     store.setActiveSave(save);
     store.setPlayMode("village");
+    store.setVisitingNeighbor(null);
     store.setBattleStatus(null);
     store.setSelection([], null);
     store.setControlGroups({});
     store.setActiveMusic("village");
-    this.renderer.setBoxSelectDefault(store.boxSelectInVillage);
+    this.renderer.setBoxSelectDefault(store.cursorTool === "box_select");
 
     this.renderer.clearEntities();
     this.grid = new OccupancyGrid();
     this.battle = new BattleEngine(this.grid, store.itemsById, store.behaviorsById);
-    this.saveTupleToUid.clear();
     this.collectedCooldownUntil.clear();
 
     const map0 = save.maps[0];
     const ownedExps = new Set(useGameStore.getState().expansions);
     const preloadNames = new Set<string>();
     if (map0) {
-      map0.items.forEach((tuple, idx) => {
-        const [itemId, tx, ty, orientation] = tuple;
+      map0.items.forEach((tuple) => {
+        const [itemId, tx, ty, orientation, , , garrison] = tuple;
         const def = store.itemsById.get(itemId);
         if (!def || !def.imgName) return;
 
@@ -184,10 +249,11 @@ export class GameController {
           def.type === "u" ? (orientation >= 1 && orientation <= 8 ? orientation : 4) : orientation
         );
         if (ent) {
-          // Authentic village stances (`IA.as`):
-          // - Wild trolls outside owned land guard their camp defensively (leash 20 tiles)
-          // - Villagers remain in survive/stand state ready for harvest/move orders
-          // - Player soldiers guard defensively and obey all click orders
+          if (Array.isArray(garrison) && garrison.length > 0) {
+            ent.garrison = garrison.map(Number);
+          }
+
+          // Authentic village stances (`IA.as`)
           if (team === "enemy" && !ownedExps.has(tileToExpansionId(tx, ty))) {
             this.battle!.setUnitsStance([ent.uid], "defensive");
           } else if (team === "player" && isVillagerEntity(ent)) {
@@ -196,7 +262,6 @@ export class GameController {
             this.battle!.setUnitsStance([ent.uid], "defensive");
           }
 
-          this.saveTupleToUid.set(ent.uid, idx);
           if (tx >= 36 && tx <= 64 && ty >= 36 && ty <= 64) {
             preloadNames.add(def.imgName);
           }
@@ -444,6 +509,16 @@ export class GameController {
       case "KeyG":
         store.setShowGrid(!store.showGrid);
         break;
+      case "KeyB":
+        if (store.playMode === "village") {
+          store.setCursorTool(store.cursorTool === "bulldoze" ? "normal" : "bulldoze");
+        }
+        break;
+      case "KeyM":
+        if (store.playMode === "village") {
+          store.setCursorTool(store.cursorTool === "box_select" ? "normal" : "box_select");
+        }
+        break;
       case "F2":
         e.preventDefault();
         this.selectAllPlayerArmy();
@@ -481,6 +556,18 @@ export class GameController {
       this.renderer.setSpellPreview(null);
       return;
     }
+    if (store.cursorTool !== "normal") {
+      store.setCursorTool("normal");
+      return;
+    }
+    if (store.activeNestModal !== null) {
+      store.setActiveNestModal(null);
+      return;
+    }
+    if (store.collectPickerTarget !== null) {
+      store.setCollectPickerTarget(null);
+      return;
+    }
     if (store.activeModal !== null) {
       store.setActiveModal(null);
       return;
@@ -510,6 +597,7 @@ export class GameController {
     }
 
     store.setActiveModal(null);
+    store.setVisitingNeighbor(null);
     store.setPlayMode(mode);
     store.setSelection([], null);
     store.setControlGroups({});
@@ -520,7 +608,6 @@ export class GameController {
     this.renderer.clearEntities();
     this.grid = new OccupancyGrid();
     this.battle = new BattleEngine(this.grid, store.itemsById, store.behaviorsById);
-    this.saveTupleToUid.clear();
 
     const enemyMap = enemySave.maps[0];
     const preloadNames = new Set<string>();
@@ -718,6 +805,88 @@ export class GameController {
     }
   }
 
+  async visitNeighbor(neighbor: {
+    id: string;
+    name: string;
+    level: number;
+    mapKey: string;
+    isKing: boolean;
+  }): Promise<void> {
+    const store = useGameStore.getState();
+    let targetSave: SaveFile | null = null;
+    if (neighbor.mapKey.startsWith("save:")) {
+      const pid = neighbor.mapKey.slice("save:".length);
+      targetSave = await gameApi.loadSave(pid);
+    } else {
+      targetSave = await gameApi.fetchMap(neighbor.mapKey);
+    }
+    if (!targetSave || !targetSave.maps[0]) {
+      this.notify(store.locale === "es" ? "No se pudo cargar el imperio vecino" : "Failed to load neighbor empire");
+      return;
+    }
+
+    store.setActiveModal(null);
+    store.setCursorTool("normal");
+    store.setSelection([], null);
+    store.setControlGroups({});
+    store.setPlayMode("visit");
+    store.setVisitingNeighbor({
+      ...neighbor,
+      assistsRemaining: 5
+    });
+    this.renderer.setBoxSelectDefault(false);
+
+    this.renderer.clearEntities();
+    this.grid = new OccupancyGrid();
+    this.battle = new BattleEngine(this.grid, store.itemsById, store.behaviorsById);
+
+    const map0 = targetSave.maps[0];
+    const preloadNames = new Set<string>();
+    for (const tuple of map0.items) {
+      const [itemId, tx, ty, orientation, , , garrison] = tuple;
+      const def = store.itemsById.get(itemId);
+      if (!def || !def.imgName) continue;
+      const ent = this.battle.spawnFromItem(
+        itemId,
+        tx,
+        ty,
+        "neutral",
+        def.type === "u" ? (orientation >= 1 && orientation <= 8 ? orientation : 4) : orientation
+      );
+      if (ent) {
+        if (Array.isArray(garrison) && garrison.length > 0) {
+          ent.garrison = garrison.map(Number);
+        }
+        if (tx >= 36 && tx <= 64 && ty >= 36 && ty <= 64) {
+          preloadNames.add(def.imgName);
+        }
+      }
+    }
+
+    const exps = map0.expansions.length > 0 ? map0.expansions : [13];
+    this.renderer.setOwnedExpansions(exps);
+    const biome = ALL_BIOME_SKINS[map0.skin] ?? "terreno";
+    store.setActiveBiome(biome);
+    void this.renderer.setBiome(biome);
+    this.renderer.camera.centerOnTile(50, 50);
+    this.syncRendererSnapshot(1);
+    void this.renderer.preloadSprites(preloadNames);
+    void this.audio.playSfx(SFX_NAMES.newTown, 0.7);
+    this.notify(
+      store.locale === "es"
+        ? `Visitando a ${neighbor.name}. Haz clic en sus edificios para ayudar (+10 Oro, +3 XP).`
+        : `Visiting ${neighbor.name}. Click buildings to assist (+10 Gold, +3 XP).`
+    );
+  }
+
+  returnFromVisit(): void {
+    const latest = useGameStore.getState().activeSave;
+    if (latest) {
+      this.loadPersistentVillage(latest);
+      this.audio.playMusic("village", 600);
+    }
+  }
+
   async sendCommands(commands: CommandPayload[]): Promise<boolean> {
     const store = useGameStore.getState();
     const save = store.activeSave;
@@ -725,20 +894,32 @@ export class GameController {
 
     const packetId = `pkt_${Date.now()}_${this.packetSeq++}`;
     try {
-      const body = await gameApi.executeCommands(save.playerInfo.pid, packetId, commands);
+      const body = await gameApi.executeCommands(save.playerInfo.pid, packetId, commands, store.adminMode);
       if (!body) return false;
 
       if (body.save) {
         store.setActiveSave(body.save);
       }
+
+      const levelUps: LevelUpNotice[] = [];
       for (const ev of body.events ?? []) {
         if (ev.type === "sfx" && ev.name) {
           void this.audio.playSfx(ev.name, 0.85);
         } else if (ev.type === "level_up" && ev.level) {
           this.renderer.spawnFloatingText(50, 50, `¡NIVEL ${ev.level}!`, 0xfacc15);
-          this.notify(store.locale === "es" ? `¡Subiste al Nivel ${ev.level}!` : `Reached Level ${ev.level}!`);
+          levelUps.push({
+            level: ev.level,
+            rankName: ev.rankName,
+            rewardType: ev.rewardType,
+            rewardAmount: ev.rewardAmount,
+            manaBonus: ev.manaBonus
+          });
         }
       }
+      if (levelUps.length > 0) {
+        store.enqueueLevelUps(levelUps);
+      }
+
       if (body.result !== "ok" && body.error) {
         this.notify(body.error);
         return false;
@@ -750,19 +931,151 @@ export class GameController {
     }
   }
 
+  async unlockBuildingEarly(itemId: number, cashCost: number): Promise<void> {
+    const store = useGameStore.getState();
+    const def = store.itemsById.get(itemId);
+    const ok = await this.sendCommands([{ cmd: "unlock_building", args: [itemId, cashCost] }]);
+    if (ok && def) {
+      this.notify(
+        store.locale === "es"
+          ? `¡${def.name} desbloqueado anticipadamente!`
+          : `${def.name} unlocked early!`
+      );
+    }
+  }
+
   async buyAndPlace(itemId: number, tx: number, ty: number): Promise<void> {
     const store = useGameStore.getState();
     const def = store.itemsById.get(itemId);
     if (!def) return;
     const ok = await this.sendCommands([{ cmd: "buy", args: [itemId, tx, ty, 0] }]);
     if (ok && this.battle && store.playMode === "village") {
-      const ent = this.battle.spawnFromItem(itemId, tx, ty, "player", def.type === "u" ? 4 : 0);
-      if (ent && store.activeSave?.maps[0]) {
-        this.saveTupleToUid.set(ent.uid, store.activeSave.maps[0].items.length - 1);
-      }
+      this.battle.spawnFromItem(itemId, tx, ty, "player", def.type === "u" ? 4 : 0);
       this.renderer.spawnFloatingText(tx, ty, `+${def.xp} XP`, 0x38bdf8);
       store.setPlacingItemId(null);
       this.renderer.setPlacementPreview(null);
+      this.syncRendererSnapshot(1);
+    }
+  }
+
+  openSpecialBuildingInterior(itemId: number, subcat: number, tx: number, ty: number): boolean {
+    const store = useGameStore.getState();
+    if (itemId === 1233) {
+      store.setActiveNestModal({ kind: "dragon", tx, ty });
+      void this.audio.playSfx(SFX_NAMES.buttonClick, 0.75);
+      return true;
+    }
+    if (itemId === 1255) {
+      store.setActiveNestModal({ kind: "monster", tx, ty });
+      void this.audio.playSfx(SFX_NAMES.buttonClick, 0.75);
+      return true;
+    }
+    if (subcat === 132 || itemId === 23 || itemId === 188 || itemId === 189) {
+      store.setSystemsTab("market");
+      store.setActiveModal("systems");
+      void this.audio.playSfx(SFX_NAMES.buttonClick, 0.75);
+      return true;
+    }
+    if (itemId === 486 || itemId === 239) {
+      store.setSystemsTab("graveyard");
+      store.setActiveModal("systems");
+      void this.audio.playSfx(SFX_NAMES.buttonClick, 0.75);
+      return true;
+    }
+    if (itemId === 1284) {
+      store.setSystemsTab("storage");
+      store.setActiveModal("systems");
+      void this.audio.playSfx(SFX_NAMES.buttonClick, 0.75);
+      return true;
+    }
+    if (SPECIAL_INTERIOR_IDS.has(itemId)) {
+      store.setSystemsTab("specials");
+      store.setActiveModal("systems");
+      void this.audio.playSfx(SFX_NAMES.buttonClick, 0.75);
+      return true;
+    }
+    return false;
+  }
+
+  async hatchNestCreature(kind: "dragon" | "monster", nestTx: number, nestTy: number): Promise<void> {
+    const store = useGameStore.getState();
+    const spawn = this.findFreeTileNear(nestTx, nestTy, 5);
+    const cmd = kind === "dragon" ? "next_dragon" : "next_monster";
+    const prevCount = store.activeSave?.maps[0]?.items.length ?? 0;
+    const ok = await this.sendCommands([{ cmd, args: [spawn.tx, spawn.ty] }]);
+    if (ok && this.battle && store.playMode === "village") {
+      const updated = useGameStore.getState().activeSave?.maps[0];
+      if (updated && updated.items.length > prevCount) {
+        const newest = updated.items[updated.items.length - 1]!;
+        const spawned = this.battle.spawnFromItem(newest[0], newest[1], newest[2], "player", 4);
+        if (spawned) {
+          this.renderer.spawnFloatingText(newest[1], newest[2], `¡${spawned.name}!`, 0xfacc15);
+          this.notify(
+            store.locale === "es"
+              ? `¡${spawned.name} se ha unido a tu imperio!`
+              : `${spawned.name} joined your empire!`
+          );
+        }
+      }
+      this.syncRendererSnapshot(1);
+    }
+  }
+
+  async activateProducerJob(uid: number, tx: number, ty: number, itemId: number, cpIndex: number): Promise<void> {
+    const ok = await this.sendCommands([{ cmd: "activate", args: [tx, ty, itemId, cpIndex] }]);
+    if (ok) {
+      const mins = COLLECT_MINUTES[Math.max(0, Math.min(3, cpIndex - 1))] ?? 5;
+      this.renderer.spawnFloatingText(tx, ty, `⏱ ${mins < 60 ? `${mins}m` : `${mins / 60}h`}`, 0x38bdf8);
+      this.refreshSelectedSummary();
+      this.syncRendererSnapshot(1);
+      void uid;
+    }
+  }
+
+  openCollectPickerForSelected(): void {
+    const sel = useGameStore.getState().selectedSummary;
+    if (!sel || !this.battle) return;
+    const ent = this.battle.entities.get(sel.uid);
+    if (!ent) return;
+    useGameStore.getState().setCollectPickerTarget({
+      uid: ent.uid,
+      itemId: ent.itemId,
+      tx: Math.round(ent.tx),
+      ty: Math.round(ent.ty),
+      name: ent.name,
+      collectType: ent.collectType,
+      baseCollect: Math.max(10, ent.collectAmount),
+      workerCount: Math.max(1, ent.garrison.length)
+    });
+  }
+
+  async popWorkerFromSelected(all: boolean): Promise<void> {
+    const store = useGameStore.getState();
+    const sel = store.selectedSummary;
+    if (!sel || !this.battle) return;
+    const ent = this.battle.entities.get(sel.uid);
+    if (!ent || ent.garrison.length === 0) return;
+
+    const toPop = all ? [...ent.garrison] : [ent.garrison[0]!];
+    const commands: CommandPayload[] = [];
+    const spawns: { id: number; tx: number; ty: number }[] = [];
+    for (const unitId of toPop) {
+      const spot = this.findFreeTileNear(Math.round(ent.tx), Math.round(ent.ty), 5);
+      commands.push({ cmd: "pop_unit", args: [Math.round(ent.tx), Math.round(ent.ty), ent.itemId, unitId, spot.tx, spot.ty] });
+      spawns.push({ id: unitId, tx: spot.tx, ty: spot.ty });
+    }
+
+    const ok = await this.sendCommands(commands);
+    if (ok) {
+      for (const sp of spawns) {
+        const gIdx = ent.garrison.indexOf(sp.id);
+        if (gIdx >= 0) ent.garrison.splice(gIdx, 1);
+        const spawned = this.battle.spawnFromItem(sp.id, sp.tx, sp.ty, "player", 4);
+        if (spawned && isVillagerEntity(spawned)) {
+          this.battle.setUnitsStance([spawned.uid], "stand");
+        }
+      }
+      this.refreshSelectedSummary();
       this.syncRendererSnapshot(1);
     }
   }
@@ -771,52 +1084,78 @@ export class GameController {
     const store = useGameStore.getState();
     const sel = store.selectedSummary;
     if (!sel || !this.battle) return;
-    // Find nearest open tile around building
-    let spawnTx = sel.tx + 1;
-    let spawnTy = sel.ty + 1;
-    outer: for (let r = 1; r <= 4; r++) {
-      for (let dx = -r; dx <= r; dx++) {
-        for (let dy = -r; dy <= r; dy++) {
-          const cx = sel.tx + dx;
-          const cy = sel.ty + dy;
-          if (this.grid.inBounds(cx, cy) && this.grid.get(cx, cy) === 0) {
-            spawnTx = cx;
-            spawnTy = cy;
-            break outer;
-          }
-        }
-      }
-    }
+    const spot = this.findFreeTileNear(sel.tx, sel.ty, 4);
     const ok = await this.sendCommands([
       { cmd: "push_queue_unit", args: [sel.tx, sel.ty, sel.itemId, unitId] },
-      { cmd: "pop_queue_unit", args: [sel.tx, sel.ty, sel.itemId, spawnTx, spawnTy] }
+      { cmd: "pop_queue_unit", args: [sel.tx, sel.ty, sel.itemId, spot.tx, spot.ty] }
     ]);
     if (ok) {
-      const ent = this.battle.spawnFromItem(unitId, spawnTx, spawnTy, "player", 4);
+      const ent = this.battle.spawnFromItem(unitId, spot.tx, spot.ty, "player", 4);
       if (ent) {
-        this.renderer.spawnFloatingText(spawnTx, spawnTy, `${ent.name}!`, 0x4ade80);
+        if (isVillagerEntity(ent)) this.battle.setUnitsStance([ent.uid], "stand");
+        this.renderer.spawnFloatingText(spot.tx, spot.ty, `${ent.name}!`, 0x4ade80);
       }
+      this.syncRendererSnapshot(1);
+    }
+  }
+
+  async collectBuildingEntity(ent: SimEntity): Promise<void> {
+    const store = useGameStore.getState();
+    const info = this.getBuildingProductionInfo(ent, Math.floor(Date.now() / 1000));
+    const tx = Math.round(ent.tx);
+    const ty = Math.round(ent.ty);
+    const fallbackSpawn = this.findFreeTileNear(tx, ty, 4);
+    const prevGarrisonLen = ent.garrison.length;
+
+    const ok = await this.sendCommands([
+      {
+        cmd: "collect_new",
+        args: [tx, ty, ent.itemId, info.cpIndex > 0 ? info.cpIndex : 2, fallbackSpawn.tx, fallbackSpawn.ty]
+      }
+    ]);
+    if (ok) {
+      if (ent.subcatFunctional !== SUBCAT_BUILDING_FARM && !COLLECT_VARIABLE_IDS.has(ent.itemId)) {
+        this.collectedCooldownUntil.set(ent.uid, performance.now() + 30000);
+      }
+      // Sync farm garrison in case insufficient wood caused farmer ejection
+      const updatedTuple = this.findSaveTuple(ent.itemId, tx, ty);
+      if (updatedTuple) {
+        const nextGarrison = updatedTuple[6].map(Number);
+        if (prevGarrisonLen > nextGarrison.length && ent.subcatFunctional === SUBCAT_BUILDING_FARM) {
+          const ejectedId = ent.garrison[0] ?? 500;
+          ent.garrison = nextGarrison;
+          const v = this.battle?.spawnFromItem(ejectedId, fallbackSpawn.tx, fallbackSpawn.ty, "player", 4);
+          if (v && this.battle) this.battle.setUnitsStance([v.uid], "stand");
+          this.notify(
+            store.locale === "es"
+              ? "Madera insuficiente para resembrar: el aldeano salió del campo."
+              : "Not enough wood to replant: villager left the field."
+          );
+        } else {
+          ent.garrison = nextGarrison;
+        }
+      }
+
+      const resLabel =
+        ent.collectType === "w"
+          ? store.locale === "es" ? "Madera" : "Wood"
+          : ent.collectType === "s"
+            ? store.locale === "es" ? "Piedra" : "Stone"
+            : ent.collectType === "f"
+              ? store.locale === "es" ? "Comida" : "Food"
+              : store.locale === "es" ? "Oro" : "Gold";
+      this.renderer.spawnFloatingText(tx, ty, `+${info.effectiveAmount} ${resLabel}`, 0xfacc15);
+      this.refreshSelectedSummary();
       this.syncRendererSnapshot(1);
     }
   }
 
   async collectSelectedBuilding(): Promise<void> {
     const sel = useGameStore.getState().selectedSummary;
-    if (!sel) return;
-    const ok = await this.sendCommands([{ cmd: "collect_new", args: [sel.tx, sel.ty, sel.itemId, 2] }]);
-    if (ok) {
-      this.collectedCooldownUntil.set(sel.uid, performance.now() + 30000);
-      const resLabel =
-        sel.collectType === "w"
-          ? "Madera"
-          : sel.collectType === "s"
-            ? "Piedra"
-            : sel.collectType === "f"
-              ? "Comida"
-              : "Oro";
-      this.renderer.spawnFloatingText(sel.tx, sel.ty, `+${sel.collectAmount} ${resLabel}`, 0xfacc15);
-      this.syncRendererSnapshot(1);
-    }
+    if (!sel || !this.battle) return;
+    const ent = this.battle.entities.get(sel.uid);
+    if (!ent) return;
+    await this.collectBuildingEntity(ent);
   }
 
   async upgradeSelectedBuilding(): Promise<void> {
@@ -851,13 +1190,42 @@ export class GameController {
     }
   }
 
+  async sellEntityDirectly(ent: SimEntity): Promise<void> {
+    const store = useGameStore.getState();
+    if (ent.subcatFunctional === SUBCAT_BUILDING_TOWNHALL) {
+      this.notify(store.locale === "es" ? "No puedes vender tu Ayuntamiento" : "You cannot sell your Town Hall");
+      return;
+    }
+    const def = store.itemsById.get(ent.itemId);
+    const refund = def ? computeSellRefund(def) : { costType: "g", amount: 0 };
+    const tx = Math.round(ent.tx);
+    const ty = Math.round(ent.ty);
+    const ok = await this.sendCommands([{ cmd: "sell", args: [tx, ty, ent.itemId, "SELL"] }]);
+    if (ok && this.battle) {
+      ent.alive = false;
+      ent.dyingTicks = 0;
+      if (ent.type === "b") {
+        this.grid.vacate(ent.uid, tx, ty, ent.width, ent.height);
+      } else {
+        this.battle.unitOccupancy.release(ent.uid);
+      }
+      if (store.selectedUids.includes(ent.uid)) {
+        store.setSelection([], null);
+        this.renderer.setSelectedEntities([]);
+      }
+      if (refund.amount > 0) {
+        this.renderer.spawnFloatingText(tx, ty, `+${refund.amount}`, 0xfacc15);
+      }
+      this.syncRendererSnapshot(1);
+    }
+  }
+
   async sellSelected(): Promise<void> {
     const sel = useGameStore.getState().selectedSummary;
-    if (!sel) return;
-    const ok = await this.sendCommands([{ cmd: "sell", args: [sel.tx, sel.ty, sel.itemId, "SELL"] }]);
-    if (ok && useGameStore.getState().activeSave) {
-      this.loadPersistentVillage(useGameStore.getState().activeSave!);
-    }
+    if (!sel || !this.battle) return;
+    const ent = this.battle.entities.get(sel.uid);
+    if (!ent) return;
+    await this.sellEntityDirectly(ent);
   }
 
   async expandTerritory(expId: number, withCash = false): Promise<void> {
@@ -961,7 +1329,17 @@ export class GameController {
       return;
     }
 
-    // Dynamic contextual RTS cursor (`attack`, `harvest`, `move`, `collect`, `boxSelect`, `default`)
+    if (store.playMode === "village" && store.cursorTool === "bulldoze") {
+      this.setContextualCursor(CURSORS.bulldoze);
+      return;
+    }
+
+    if (store.playMode === "visit") {
+      this.setContextualCursor(hitEntity && hitEntity.type === "b" ? CURSORS.collect : CURSORS.default);
+      return;
+    }
+
+    // Dynamic contextual RTS cursor
     const hasSelectedUnits =
       this.battle !== null &&
       store.selectedUids.some((id) => {
@@ -980,7 +1358,7 @@ export class GameController {
           const e = this.battle?.entities.get(id);
           return e && e.alive && isVillagerEntity(e);
         });
-        if (def && isHarvestableResourceSubcat(def.subcatFunctional) && hasVillager) {
+        if (def && isWorkableOrHarvestableTarget(def.subcatFunctional, def.id) && hasVillager) {
           this.setContextualCursor(CURSORS.harvest);
           return;
         }
@@ -991,12 +1369,12 @@ export class GameController {
       }
     }
 
-    if (hitEntity?.collectReady) {
+    if (hitEntity?.collectReady || hitEntity?.statusBadge === "zzz" || hitEntity?.statusBadge === "ready_nest") {
       this.setContextualCursor(CURSORS.collect);
       return;
     }
 
-    const boxDefault = store.playMode !== "village" || store.boxSelectInVillage;
+    const boxDefault = store.playMode !== "village" || store.cursorTool === "box_select";
     this.setContextualCursor(boxDefault ? CURSORS.boxSelect : CURSORS.default);
   }
 
@@ -1023,12 +1401,12 @@ export class GameController {
       return true;
     }
 
-    // 2. Harvest Tree (125), Stone (126), Gold (127), or Farm (122)
-    // Canonical `IsoUnit.CanHarvest` (`IsoUnit.as:2791-2805`): only villagers harvest;
-    // any military units selected alongside villagers escort to the perimeter.
+    // 2. Harvest Tree (125), Stone (126), Gold (127), OR enter Producer Building (121/124) / Farm (122)
+    // Phase 4 Fix (`IsoUnit.as:2222-2240`): NEVER play Lumber/Rock/Farm SFX when issuing order;
+    // SFX plays ONLY upon arrival in `BattleEngine.tickWorkerHarvest`!
     if (hitEntity && hitEntity.type === "b") {
       const def = store.itemsById.get(hitEntity.itemId);
-      if (def && isHarvestableResourceSubcat(def.subcatFunctional)) {
+      if (def && isWorkableOrHarvestableTarget(def.subcatFunctional, def.id)) {
         const workers: number[] = [];
         const escorts: number[] = [];
         for (const id of playerUnits) {
@@ -1043,16 +1421,13 @@ export class GameController {
             this.battle.orderMove(escorts, hitEntity.tx, hitEntity.ty);
           }
           this.renderer.spawnCommandPulse(hitEntity.tx, hitEntity.ty, 0xfacc15);
-          this.renderer.spawnNumberParticle(
-            hitEntity.tx,
-            hitEntity.ty,
-            "gold",
-            store.locale === "es" ? "Recolectar" : "Harvest"
-          );
-          void this.audio.playSfx(
-            def.collectType === "w" ? SFX_NAMES.lumber : def.collectType === "f" ? SFX_NAMES.farm : SFX_NAMES.rock,
-            0.65
-          );
+          const actionLabel = isEnterableWorkBuildingSubcat(def.subcatFunctional)
+            ? def.subcatFunctional === SUBCAT_BUILDING_FARM
+              ? store.locale === "es" ? "Sembrar" : "Sow"
+              : store.locale === "es" ? "Trabajar" : "Work"
+            : store.locale === "es" ? "Recolectar" : "Harvest";
+          this.renderer.spawnNumberParticle(hitEntity.tx, hitEntity.ty, "gold", actionLabel);
+          void this.audio.playSfx(SFX_NAMES.buttonClick, 0.45);
           return true;
         }
       }
@@ -1077,13 +1452,18 @@ export class GameController {
   ): Promise<void> {
     const store = useGameStore.getState();
 
-    // Right-click: cancel active tool OR issue RTS Move/Attack/Harvest order
+    // Right-click: cancel active tool/bulldoze OR issue RTS Move/Attack/Harvest order
     if (button === 2) {
-      if (store.placingItemId !== null || store.castingMagicId !== null || store.movingEntityUid !== null) {
+      if (
+        store.placingItemId !== null ||
+        store.castingMagicId !== null ||
+        store.movingEntityUid !== null ||
+        store.cursorTool === "bulldoze"
+      ) {
         this.handleEscape();
         return;
       }
-      if (this.battle && store.selectedUids.length > 0) {
+      if (this.battle && store.selectedUids.length > 0 && store.playMode !== "visit") {
         const playerUnits = store.selectedUids.filter((id) => {
           const e = this.battle?.entities.get(id);
           return e && e.alive && e.type === "u" && e.team === "player";
@@ -1096,6 +1476,28 @@ export class GameController {
     }
 
     if (button !== 0) return;
+
+    // Neighbor Visit Mode (`PopOverVisit` — read-only with friendly assists, NO tutorial!)
+    if (store.playMode === "visit") {
+      const visit = store.visitingNeighbor;
+      if (hitEntity && hitEntity.type === "b" && visit) {
+        if (visit.assistsRemaining <= 0) {
+          this.notify(
+            store.locale === "es"
+              ? `Ya ayudaste al máximo a ${visit.name} en esta visita.`
+              : `No assists remaining for ${visit.name} on this visit.`
+          );
+          return;
+        }
+        const ok = await this.sendCommands([{ cmd: "neighbor_assist", args: [visit.id] }]);
+        if (ok) {
+          store.setVisitingNeighbor({ ...visit, assistsRemaining: visit.assistsRemaining - 1 });
+          this.renderer.spawnNumberParticle(hitEntity.tx, hitEntity.ty, "gold", "+10 Oro");
+          this.renderer.spawnNumberParticle(hitEntity.tx, hitEntity.ty - 0.6, "xp", "+3 XP");
+        }
+      }
+      return;
+    }
 
     // Left-click when casting spell
     if (store.castingMagicId !== null) {
@@ -1141,6 +1543,23 @@ export class GameController {
       return;
     }
 
+    // Explicit Bulldoze / Delete / Sell Cursor Tool (`CURSOR_BULLDOZE`, `GuiManager.as:1252`)
+    if (store.playMode === "village" && store.cursorTool === "bulldoze" && this.battle) {
+      if (!hitEntity || hitEntity.team !== "player") {
+        this.notify(
+          store.locale === "es"
+            ? "Haz clic en un edificio o unidad tuya para vender/eliminar (Esc sale del modo)."
+            : "Click one of your buildings or units to sell/delete (Esc exits tool)."
+        );
+        return;
+      }
+      const ent = this.battle.entities.get(hitEntity.uid);
+      if (ent) {
+        await this.sellEntityDirectly(ent);
+      }
+      return;
+    }
+
     const selectedPlayerUnits = this.battle
       ? store.selectedUids.filter((id) => {
           const e = this.battle?.entities.get(id);
@@ -1148,8 +1567,7 @@ export class GameController {
         })
       : [];
 
-    // Canonical `Config.DOUBLECLICK_SELECTION_RADIUS = 10` (`Config.as:224`):
-    // Double-click selects nearby friendly units of the same type (or all if >0 within radius 10)
+    // Canonical double-click on player units -> select nearby same-type units
     if (mods.doubleClick && hitEntity && hitEntity.type === "u" && hitEntity.team === "player" && this.battle) {
       const nearbySameType: number[] = [];
       for (const e of this.battle.entities.values()) {
@@ -1168,6 +1586,20 @@ export class GameController {
       return;
     }
 
+    // Double-click on a special building opens its interior directly
+    if (
+      mods.doubleClick &&
+      store.playMode === "village" &&
+      hitEntity &&
+      hitEntity.type === "b" &&
+      hitEntity.team === "player"
+    ) {
+      const def = store.itemsById.get(hitEntity.itemId);
+      if (def && this.openSpecialBuildingInterior(def.id, def.subcatFunctional, Math.round(hitEntity.tx), Math.round(hitEntity.ty))) {
+        return;
+      }
+    }
+
     // Classic Social Empires left-click commanding when player units are selected
     if (selectedPlayerUnits.length > 0) {
       if (hitEntity && hitEntity.team === "enemy") {
@@ -1180,7 +1612,7 @@ export class GameController {
           const e = this.battle?.entities.get(id);
           return e ? isVillagerEntity(e) : false;
         });
-        if (def && isHarvestableResourceSubcat(def.subcatFunctional) && hasVillager) {
+        if (def && isWorkableOrHarvestableTarget(def.subcatFunctional, def.id) && hasVillager) {
           this.issueUnitOrder(selectedPlayerUnits, tx, ty, hitEntity);
           return;
         }
@@ -1193,6 +1625,22 @@ export class GameController {
 
     if (hitEntity) {
       this.handleEntitySelect(hitEntity, mods.ctrlKey || mods.shiftKey);
+
+      // Direct click on player building with active ZZZ (choose producer job) or Collect Ready badge
+      if (store.playMode === "village" && hitEntity.type === "b" && hitEntity.team === "player" && this.battle) {
+        const ent = this.battle.entities.get(hitEntity.uid);
+        if (ent) {
+          if (hitEntity.statusBadge === "zzz" && COLLECT_VARIABLE_IDS.has(ent.itemId) && ent.garrison.length > 0) {
+            this.openCollectPickerForSelected();
+            return;
+          }
+          if (hitEntity.collectReady && (ent.subcatFunctional === SUBCAT_BUILDING_FARM || COLLECT_VARIABLE_IDS.has(ent.itemId))) {
+            await this.collectBuildingEntity(ent);
+            return;
+          }
+        }
+      }
+
       if (hitEntity.team === "enemy") {
         this.notify(
           store.locale === "es"
@@ -1227,6 +1675,29 @@ export class GameController {
       this.lastHudSyncAt = now;
       useGameStore.getState().setMetrics(this.renderer.getMetrics());
       this.refreshSelectedSummary();
+    }
+
+    // Periodic check (every 5s) for completed 3h stone/gold regeneration craters
+    if (now - this.lastRegenCheckAt > 5000) {
+      this.lastRegenCheckAt = now;
+      this.checkRegeneratingNodes();
+    }
+  }
+
+  private checkRegeneratingNodes(): void {
+    const store = useGameStore.getState();
+    if (store.playMode !== "village" || !this.battle || !store.activeSave?.maps[0]) return;
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (const tuple of store.activeSave.maps[0].items) {
+      const [itemId, tx, ty, , ts] = tuple;
+      if ((itemId === ID_BUILDING_REGEN_GOLD || itemId === ID_BUILDING_REGEN_STONE) && nowSec - ts >= REGEN_ORE_DURATION_SEC) {
+        void this.sendCommands([{ cmd: "finish_regen", args: [tx, ty, itemId] }]).then((ok) => {
+          if (ok && useGameStore.getState().activeSave) {
+            this.loadPersistentVillage(useGameStore.getState().activeSave!);
+          }
+        });
+        break;
+      }
     }
   }
 
@@ -1268,6 +1739,52 @@ export class GameController {
         case "sfx":
           void this.audio.playSfx(ev.name, 0.75);
           break;
+        case "worker_enter_building": {
+          // Remove entered villager from active selection
+          if (store.selectedUids.includes(ev.workerUid)) {
+            const remaining = store.selectedUids.filter((id) => id !== ev.workerUid);
+            this.renderer.setSelectedEntities(remaining);
+            store.setSelection(remaining, remaining.length > 0 ? this.buildEntitySummary(remaining[0]!) : null);
+          }
+          if (store.playMode === "village") {
+            void this.sendCommands([
+              {
+                cmd: "push_unit",
+                args: [ev.buildingTx, ev.buildingTy, ev.buildingItemId, ev.workerItemId, ev.workerTx, ev.workerTy]
+              }
+            ]).then((ok) => {
+              if (!ok) return;
+              const bEnt = this.battle?.entities.get(ev.buildingUid);
+              if (!bEnt) return;
+              if (ev.subcatFunctional === SUBCAT_BUILDING_FARM) {
+                this.renderer.spawnFloatingText(
+                  ev.buildingTx,
+                  ev.buildingTy,
+                  store.locale === "es" ? "¡Sembrando! (30s)" : "Sowing! (30s)",
+                  0x4ade80
+                );
+              } else if (COLLECT_VARIABLE_IDS.has(ev.buildingItemId)) {
+                const tuple = this.findSaveTuple(ev.buildingItemId, ev.buildingTx, ev.buildingTy);
+                const cp = Number(tuple?.[7]?.cp ?? 0);
+                if (cp === 0) {
+                  useGameStore.getState().setCollectPickerTarget({
+                    uid: bEnt.uid,
+                    itemId: bEnt.itemId,
+                    tx: ev.buildingTx,
+                    ty: ev.buildingTy,
+                    name: bEnt.name,
+                    collectType: bEnt.collectType,
+                    baseCollect: Math.max(10, bEnt.collectAmount),
+                    workerCount: Math.max(1, bEnt.garrison.length)
+                  });
+                }
+              }
+              this.refreshSelectedSummary();
+              this.syncRendererSnapshot(1);
+            });
+          }
+          break;
+        }
         case "harvest": {
           const kind: NumberParticleKind =
             ev.resourceType === "w"
@@ -1288,8 +1805,27 @@ export class GameController {
           this.renderer.spawnNumberParticle(ev.tx, ev.ty, kind, `+${ev.amount} ${label}`);
           if (store.playMode === "village") {
             const resEnt = this.battle?.entities.get(ev.resourceUid);
-            if (resEnt) {
-              void this.sendCommands([{ cmd: "collect_new", args: [Math.round(resEnt.tx), Math.round(resEnt.ty), resEnt.itemId, 2] }]);
+            const rTx = Math.round(ev.tx);
+            const rTy = Math.round(ev.ty);
+            const itemId = ev.itemId ?? resEnt?.itemId;
+            if (itemId !== undefined) {
+              const batch: CommandPayload[] = [{ cmd: "collect_new", args: [rTx, rTy, itemId, 2] }];
+              if (ev.depleted) {
+                batch.push({ cmd: "sell", args: [rTx, rTy, itemId, "HARVEST"] });
+                const subcat = ev.subcatFunctional ?? resEnt?.subcatFunctional ?? 0;
+                if (subcat === SUBCAT_RESOURCE_STONE) {
+                  batch.push({ cmd: "spawn_regen_node", args: [rTx, rTy, ID_BUILDING_REGEN_STONE] });
+                  this.battle?.spawnFromItem(ID_BUILDING_REGEN_STONE, rTx, rTy, "neutral", 0);
+                } else if (subcat === SUBCAT_RESOURCE_GOLD) {
+                  batch.push({ cmd: "spawn_regen_node", args: [rTx, rTy, ID_BUILDING_REGEN_GOLD] });
+                  this.battle?.spawnFromItem(ID_BUILDING_REGEN_GOLD, rTx, rTy, "neutral", 0);
+                }
+                if (store.selectedUids.includes(ev.resourceUid)) {
+                  store.setSelection([], null);
+                  this.renderer.setSelectedEntities([]);
+                }
+              }
+              void this.sendCommands(batch);
             }
           }
           break;
@@ -1362,21 +1898,159 @@ export class GameController {
     }
   }
 
-  private isBuildingCollectReady(e: SimEntity, nowMs: number): boolean {
-    if (e.type !== "b" || e.team !== "player" || e.collectAmount <= 0) return false;
-    if (WILD_NEUTRAL_SUBCATS.has(e.subcatFunctional)) return false;
-    const cd = this.collectedCooldownUntil.get(e.uid) ?? 0;
-    return nowMs >= cd;
+  private getBuildingProductionInfo(
+    e: SimEntity,
+    nowSec: number
+  ): {
+    collectReady: boolean;
+    effectiveAmount: number;
+    cpIndex: number;
+    elapsedSec: number;
+    durationSec: number;
+    visualState: RenderEntityData["buildingVisualState"];
+    statusBadge: RenderEntityData["statusBadge"];
+  } {
+    const store = useGameStore.getState();
+    const priv = store.activeSave?.privateState ?? {};
+    const tuple = store.playMode === "village" ? this.findSaveTuple(e.itemId, e.tx, e.ty) : null;
+
+    // 1. Dragon Breeding Nest (1233) & Monsters Nest (1255) (`NestsManager.as`)
+    if (e.itemId === 1233 && e.team === "player") {
+      const active = Number(priv.dragonNestActive ?? 0) === 1;
+      const step = Number(priv.stepNumber ?? 0);
+      const lastTs = Number(priv.timeStampTakeCare ?? 0);
+      const ready = active && (step >= NEST_TOTAL_STEPS || lastTs === 0 || nowSec - lastTs >= NEST_STEP_COOLDOWN_SEC);
+      return {
+        collectReady: false,
+        effectiveAmount: 0,
+        cpIndex: 0,
+        elapsedSec: 0,
+        durationSec: 0,
+        visualState: "loop",
+        statusBadge: ready ? "ready_nest" : !active ? "zzz" : null
+      };
+    }
+    if (e.itemId === 1255 && e.team === "player") {
+      const active = Number(priv.monsterNestActive ?? 0) === 1;
+      const step = Number(priv.stepMonsterNumber ?? 0);
+      const lastTs = Number(priv.timeStampTakeCareMonster ?? 0);
+      const ready = active && (step >= NEST_TOTAL_STEPS || lastTs === 0 || nowSec - lastTs >= NEST_STEP_COOLDOWN_SEC);
+      return {
+        collectReady: false,
+        effectiveAmount: 0,
+        cpIndex: 0,
+        elapsedSec: 0,
+        durationSec: 0,
+        visualState: "loop",
+        statusBadge: ready ? "ready_nest" : !active ? "zzz" : null
+      };
+    }
+
+    // 2. Crop Fields / Farms (`subcat 122`): exact 30-second sowing cycle when villager is inside
+    if (e.subcatFunctional === SUBCAT_BUILDING_FARM && e.team === "player") {
+      if (e.garrison.length === 0) {
+        return {
+          collectReady: false,
+          effectiveAmount: e.collectAmount,
+          cpIndex: 0,
+          elapsedSec: 0,
+          durationSec: 30,
+          visualState: "idle",
+          statusBadge: null
+        };
+      }
+      const isFemale = e.garrison[0] === 501;
+      const startTs = tuple ? tuple[4] : nowSec;
+      const durationSec = 30;
+      const elapsedSec = Math.max(0, nowSec - startTs);
+      const ready = elapsedSec >= durationSec;
+      return {
+        collectReady: ready,
+        effectiveAmount: e.collectAmount,
+        cpIndex: 0,
+        elapsedSec,
+        durationSec,
+        visualState: ready
+          ? isFemale ? "ready_female" : "ready_male"
+          : isFemale ? "working_female" : "working_male",
+        statusBadge: ready ? "collect" : null
+      };
+    }
+
+    // 3. Variable Producer Buildings (Gold Mines, Stone Mines, Lumber Mills, Windmills)
+    if (COLLECT_VARIABLE_IDS.has(e.itemId) && e.team === "player") {
+      if (e.garrison.length === 0) {
+        return {
+          collectReady: false,
+          effectiveAmount: e.collectAmount,
+          cpIndex: 0,
+          elapsedSec: 0,
+          durationSec: 0,
+          visualState: "idle",
+          statusBadge: null
+        };
+      }
+      const cpIndex = Number(tuple?.[7]?.cp ?? 0);
+      if (cpIndex <= 0) {
+        return {
+          collectReady: false,
+          effectiveAmount: e.collectAmount,
+          cpIndex: 0,
+          elapsedSec: 0,
+          durationSec: 0,
+          visualState: "idle",
+          statusBadge: "zzz"
+        };
+      }
+      const mins = COLLECT_MINUTES[Math.max(0, Math.min(3, cpIndex - 1))] ?? 5;
+      const durationSec = mins * 60;
+      const startTs = tuple ? tuple[4] : nowSec;
+      const elapsedSec = Math.max(0, nowSec - startTs);
+      const ready = elapsedSec >= durationSec;
+      const effectiveAmount = computeProducerYield(e.collectAmount, e.garrison.length, cpIndex);
+      return {
+        collectReady: ready,
+        effectiveAmount,
+        cpIndex,
+        elapsedSec,
+        durationSec,
+        visualState: "idle",
+        statusBadge: ready ? "collect" : null
+      };
+    }
+
+    // 4. Other passive income buildings (Houses, Wonders, etc.)
+    const passiveReady =
+      e.type === "b" &&
+      e.team === "player" &&
+      e.collectAmount > 0 &&
+      !WILD_NEUTRAL_SUBCATS.has(e.subcatFunctional) &&
+      e.subcatFunctional !== SUBCAT_BUILDING_MINE &&
+      e.subcatFunctional !== SUBCAT_BUILDING_MILL &&
+      performance.now() >= (this.collectedCooldownUntil.get(e.uid) ?? 0);
+
+    return {
+      collectReady: passiveReady,
+      effectiveAmount: e.collectAmount,
+      cpIndex: 0,
+      elapsedSec: 0,
+      durationSec: 0,
+      visualState: undefined,
+      statusBadge: passiveReady ? "collect" : null
+    };
   }
 
   private syncRendererSnapshot(_alpha: number): void {
     if (!this.battle) return;
     const renderList: RenderEntityData[] = [];
-    const selectedSet = new Set(useGameStore.getState().selectedUids);
-    const nowMs = performance.now();
+    const store = useGameStore.getState();
+    const selectedSet = new Set(store.selectedUids);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const biomeIdx = Math.max(0, ALL_BIOME_SKINS.indexOf(store.activeBiome));
 
     for (const e of this.battle.entities.values()) {
       if (!e.alive && e.dyingTicks <= 0) continue;
+      const prod = e.type === "b" ? this.getBuildingProductionInfo(e, nowSec) : null;
       renderList.push({
         uid: e.uid,
         itemId: e.itemId,
@@ -1402,7 +2076,11 @@ export class GameController {
         selected: selectedSet.has(e.uid),
         team: e.team,
         limitRatio: e.behavior?.hasLimitBar && e.limitMax > 0 ? e.limitGauge / e.limitMax : 0,
-        collectReady: this.isBuildingCollectReady(e, nowMs),
+        collectReady: prod ? prod.collectReady : false,
+        buildingVisualState: prod?.visualState,
+        statusBadge: prod?.statusBadge ?? null,
+        biomeIndex: biomeIdx,
+        garrisonCount: e.garrison.length,
         inCombat: e.inCombatTicks > 0,
         frozen: e.status.frozenTicks > 0,
         poisoned: e.status.poisonTicks > 0,
@@ -1428,11 +2106,12 @@ export class GameController {
 
   private buildEntitySummary(uid: number): SelectedEntitySummary | null {
     const e: SimEntity | undefined = this.battle?.entities.get(uid);
-    if (!e) return null;
-    const save = useGameStore.getState().activeSave;
-    const tupleIdx = this.saveTupleToUid.get(uid);
-    const attrs = tupleIdx !== undefined ? save?.maps[0]?.items[tupleIdx]?.[7] : undefined;
+    if (!e || !e.alive) return null;
+    const tuple = this.findSaveTuple(e.itemId, e.tx, e.ty);
+    const attrs = tuple?.[7];
     const queue = Array.isArray(attrs?.queue) ? (attrs.queue as number[]) : [];
+    const nowSec = Math.floor(Date.now() / 1000);
+    const prod = e.type === "b" ? this.getBuildingProductionInfo(e, nowSec) : null;
 
     return {
       uid: e.uid,
@@ -1452,12 +2131,19 @@ export class GameController {
       orientation: e.orientation,
       animState: e.animState,
       stance: e.stance,
+      subcatFunctional: e.subcatFunctional,
       limitGauge: e.limitGauge,
       limitMax: e.limitMax,
       specialCooldownSecs: e.specialCooldownTicks.map((ticks) => Math.ceil(ticks / 30)),
-      collectReady: this.isBuildingCollectReady(e, performance.now()),
-      collectAmount: e.collectAmount,
+      collectReady: prod ? prod.collectReady : false,
+      collectAmount: prod ? prod.effectiveAmount : e.collectAmount,
       collectType: e.collectType,
+      unitCapacity: e.unitCapacity,
+      garrison: [...e.garrison],
+      productionCp: prod?.cpIndex ?? 0,
+      productionElapsedSec: prod?.elapsedSec ?? 0,
+      productionDurationSec: prod?.durationSec ?? 0,
+      statusBadge: prod?.statusBadge ?? null,
       queue,
       behavior: e.behavior
     };
@@ -1467,7 +2153,7 @@ export class GameController {
     const store = useGameStore.getState();
     if (store.selectedUids.length === 0) return;
     const summary = this.buildEntitySummary(store.selectedUids[0]!);
-    store.setSelection(store.selectedUids, summary);
+    store.setSelection(summary ? store.selectedUids : [], summary);
   }
 
   private notify(msg: string): void {

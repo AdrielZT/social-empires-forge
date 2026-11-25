@@ -76,4 +76,92 @@ describe("sef-server Phase 2 & 3 Authoritative API", () => {
 
     await app.close();
   });
+
+  it("enforces User Mode vs Admin Mode on /api/commands, awards Level Up rewards, and persists Dragon Nest actions", async () => {
+    const app = await createServer({ dbPath: ":memory:" });
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/saves",
+      payload: { name: "Imperio Progresion" }
+    });
+    const created = createRes.json().save;
+    const pid = created.playerInfo.pid as string;
+    expect(created.maps[0].level).toBe(2);
+    expect(created.maps[0].xp).toBe(30);
+
+    // 1. User Mode blocks buying high-level item (e.g., item 1299 Cash Wonder minLevel > 2 or high-level barracks)
+    const itemsRes = await app.inject({ method: "GET", url: "/api/game-data/items" });
+    const items = itemsRes.json() as { id: number; minLevel: number; inStore: boolean; type: string }[];
+    const lockedItem = items.find((i) => i.inStore && i.minLevel >= 10 && i.type === "b")!;
+    expect(lockedItem).toBeDefined();
+
+    const userBuy = await app.inject({
+      method: "POST",
+      url: "/api/commands",
+      payload: {
+        pid,
+        packetId: "pkt-user-locked",
+        tries: 1,
+        timestamp: 2000,
+        adminMode: false,
+        commands: [{ cmd: "buy", args: [lockedItem.id, 47, 47, 0] }]
+      }
+    });
+    expect(userBuy.json().result).toBe("desync");
+
+    // 2. Switching to Admin Mode allows buying the locked item on the SAME save without losing it
+    const adminBuy = await app.inject({
+      method: "POST",
+      url: "/api/commands",
+      payload: {
+        pid,
+        packetId: "pkt-admin-unlock",
+        tries: 1,
+        timestamp: 2001,
+        adminMode: true,
+        commands: [{ cmd: "buy", args: [lockedItem.id, 47, 47, 0] }]
+      }
+    });
+    expect(adminBuy.json().result).toBe("ok");
+
+    // 3. Awarding +180 XP crosses L3 (60), L4 (100), L5 (200 -> +1 Cash!)
+    const prevCash = adminBuy.json().save.playerInfo.cash as number;
+    const lvlRes = await app.inject({
+      method: "POST",
+      url: "/api/commands",
+      payload: {
+        pid,
+        packetId: "pkt-level-up",
+        tries: 1,
+        timestamp: 2002,
+        adminMode: false,
+        commands: [{ cmd: "reward_goal", args: [999, 500, 180] }]
+      }
+    });
+    const lvlBody = lvlRes.json();
+    expect(lvlBody.result).toBe("ok");
+    expect(lvlBody.save.maps[0].level).toBe(5);
+    expect(lvlBody.save.playerInfo.cash).toBe(prevCash + 1);
+    const lvlEvents = (lvlBody.events as { type: string; level?: number }[]).filter((e) => e.type === "level_up");
+    expect(lvlEvents.length).toBeGreaterThanOrEqual(1);
+
+    // 4. Activate Dragon Nest in Admin Mode and verify privateState persistence
+    const nestRes = await app.inject({
+      method: "POST",
+      url: "/api/commands",
+      payload: {
+        pid,
+        packetId: "pkt-dragon-nest",
+        tries: 1,
+        timestamp: 2003,
+        adminMode: true,
+        commands: [{ cmd: "activate_dragon", args: [0] }, { cmd: "next_step_dragon", args: [] }]
+      }
+    });
+    expect(nestRes.json().result).toBe("ok");
+    expect(nestRes.json().save.privateState.dragonNestActive).toBe(1);
+    expect(nestRes.json().save.privateState.stepNumber).toBe(1);
+
+    await app.close();
+  });
 });

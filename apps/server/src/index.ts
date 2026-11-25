@@ -11,7 +11,7 @@ import {
   type GameItem,
   type SaveFile
 } from "@sef/shared-types";
-import { applyCommand, type CommandExecutionContext, type CommandSideEvent } from "@sef/engine-sim";
+import { applyCommand, type CommandExecutionContext, type CommandSideEvent, type LevelTableEntry } from "@sef/engine-sim";
 import { SaveRepository } from "./db/SaveRepository.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -100,7 +100,7 @@ export async function createServer(options: ServerOptions = {}): Promise<Fastify
   const itemsList = readJsonSafe<GameItem[]>(path.join(gameDataDir, "items.json")) ?? [];
   const itemsById = new Map<number, GameItem>();
   for (const it of itemsList) itemsById.set(it.id, it);
-  const levels = readJsonSafe<{ level?: number | string; exp_required?: number | string }[]>(
+  const levels = readJsonSafe<LevelTableEntry[]>(
     path.join(gameDataDir, "levels.json")
   ) ?? [];
   const expansionPrices = readJsonSafe<{ coins?: number | string; cash?: number | string; level?: number | string }[]>(
@@ -258,7 +258,8 @@ export async function createServer(options: ServerOptions = {}): Promise<Fastify
       levels,
       expansionPrices,
       globals,
-      nowSec
+      nowSec,
+      adminMode: batch.adminMode
     };
 
     const allEvents: CommandSideEvent[] = [];

@@ -39,6 +39,10 @@ export interface RenderEntityData {
   team?: "player" | "enemy" | "neutral";
   limitRatio?: number;
   collectReady?: boolean;
+  buildingVisualState?: "idle" | "working_male" | "working_female" | "ready_male" | "ready_female" | "loop";
+  statusBadge?: "collect" | "zzz" | "ready_nest" | null;
+  biomeIndex?: number;
+  garrisonCount?: number;
   inCombat?: boolean;
   frozen?: boolean;
   poisoned?: boolean;
@@ -761,7 +765,8 @@ export class IsoRenderer {
     const showHp = (d.hp < d.maxHp || isSel || isHov || Boolean(d.inCombat)) && d.maxHp > 1;
     const yTop = Math.round(vis.spriteTopOffset);
 
-    const sig = `${Math.round(d.hp)}/${d.maxHp}|${showHp ? 1 : 0}|${isSel ? 1 : 0}|${d.team}|${d.collectReady ? 1 : 0}|${d.frozen ? 1 : 0}|${d.poisoned ? 1 : 0}|${d.shielded ? 1 : 0}|${Math.round((d.limitRatio ?? 0) * 20)}|${yTop}`;
+    const badge = d.statusBadge ?? (d.collectReady ? "collect" : null);
+    const sig = `${Math.round(d.hp)}/${d.maxHp}|${showHp ? 1 : 0}|${isSel ? 1 : 0}|${d.team}|${badge ?? ""}|${d.frozen ? 1 : 0}|${d.poisoned ? 1 : 0}|${d.shielded ? 1 : 0}|${Math.round((d.limitRatio ?? 0) * 20)}|${yTop}`;
     if (vis.lastOverlaySig === sig) return;
     vis.lastOverlaySig = sig;
 
@@ -814,15 +819,37 @@ export class IsoRenderer {
       }
     }
 
-    vis.collectBadge.visible = Boolean(d.collectReady);
+    vis.collectBadge.visible = badge !== null;
     if (vis.collectBadge.visible) {
       const g = vis.collectBadge;
       g.clear();
       const yOff = -yTop - 18;
-      g.circle(0, yOff, 11)
-        .fill({ color: 0xfacc15 })
-        .stroke({ width: 2.5, color: 0x78350f });
-      g.circle(-2, yOff - 2, 3.5).fill({ color: 0xfef9c3, alpha: 0.75 });
+      if (badge === "collect") {
+        g.circle(0, yOff, 12)
+          .fill({ color: 0xfacc15 })
+          .stroke({ width: 2.5, color: 0x78350f });
+        g.circle(-2.5, yOff - 2.5, 3.8).fill({ color: 0xfef9c3, alpha: 0.8 });
+      } else if (badge === "zzz") {
+        // Canonical `PopupCollect.addIconZZ` / `NestsManager` idle-attention bubble
+        g.roundRect(-14, yOff - 10, 28, 20, 8)
+          .fill({ color: 0x1e3a8a, alpha: 0.95 })
+          .stroke({ width: 2, color: 0x93c5fd });
+        // Crisp stylized 'Z' glyph inside bubble
+        g.moveTo(-6, yOff - 4)
+          .lineTo(6, yOff - 4)
+          .lineTo(-6, yOff + 4)
+          .lineTo(6, yOff + 4)
+          .stroke({ width: 2.4, color: 0xfef08a });
+      } else if (badge === "ready_nest") {
+        // Ready-to-hatch / ready-to-care nest star badge
+        g.circle(0, yOff, 12)
+          .fill({ color: 0x10b981 })
+          .stroke({ width: 2.5, color: 0xfef08a });
+        g.moveTo(0, yOff - 6)
+          .lineTo(0, yOff + 1)
+          .stroke({ width: 3, color: 0xffffff });
+        g.circle(0, yOff + 5, 1.8).fill({ color: 0xffffff });
+      }
     }
   }
 
@@ -1051,8 +1078,48 @@ export class IsoRenderer {
 
     let frameKey: string;
     if (type === "b") {
-      // Buildings/trees/farms store damage/growth states on sub-timelines (never loop at 24 FPS)
-      if (anim.frames.length > 1 && hp < maxHp && maxHp > 0) {
+      const animMode = atlas.meta.animMode;
+      const subcat = vis.data.subcatFunctional ?? 0;
+      const bState = vis.data.buildingVisualState;
+      if (orientation === 1 && !atlas.meta.animations["f2"]) {
+        flipX = -1;
+      }
+
+      if ((animMode === "loop" || bState === "loop") && anim.frames.length > 1) {
+        // Canonical nested-animated buildings (Dragon Nest 1233_criadero, Monster Nest 1255_monsternest, etc.)
+        vis.animElapsed += dtSec;
+        const fps = Math.max(4, Math.min(30, atlas.meta.fps || 14));
+        const idx = Math.floor(vis.animElapsed * fps) % anim.frames.length;
+        frameKey = anim.frames[idx]!;
+      } else if ((animMode === "farm" || subcat === SUBCAT_BUILDING_FARM) && anim.frames.length >= 22) {
+        // Canonical `IsoElement.as:1065-1111`: 45-frame farm SWF timeline
+        // 0=empty, 1..20=male sowing, 21..42=female sowing, 43=male ready, 44=female ready
+        if (bState === "working_male") {
+          vis.animElapsed += dtSec;
+          const span = Math.min(20, anim.frames.length - 1);
+          const idx = 1 + (Math.floor(vis.animElapsed * 10) % Math.max(1, span));
+          frameKey = anim.frames[idx]!;
+        } else if (bState === "working_female") {
+          vis.animElapsed += dtSec;
+          const start = Math.min(21, anim.frames.length - 1);
+          const span = Math.max(1, Math.min(22, anim.frames.length - 2 - start));
+          const idx = start + (Math.floor(vis.animElapsed * 10) % span);
+          frameKey = anim.frames[idx]!;
+        } else if (bState === "ready_male") {
+          frameKey = anim.frames[Math.min(43, anim.frames.length - 1)]!;
+        } else if (bState === "ready_female") {
+          frameKey = anim.frames[Math.min(44, anim.frames.length - 1)]!;
+        } else {
+          frameKey = anim.frames[0]!;
+        }
+      } else if ((animMode === "tree" || subcat === 125) && anim.frames.length > 1) {
+        // Canonical `IsoElement.as`: tree frame corresponds to biome skin index
+        const idx = Math.abs(vis.data.biomeIndex ?? 0) % anim.frames.length;
+        frameKey = anim.frames[idx]!;
+      } else if ((animMode === "ranch" || subcat === 123) && anim.frames.length > 1) {
+        const idx = Math.min(anim.frames.length - 1, Math.max(0, vis.data.garrisonCount ?? 0));
+        frameKey = anim.frames[idx]!;
+      } else if (anim.frames.length > 1 && hp < maxHp && maxHp > 0) {
         const dmgRatio = Math.max(0, Math.min(0.99, 1 - hp / maxHp));
         const idx = Math.min(anim.frames.length - 1, Math.floor(dmgRatio * anim.frames.length));
         frameKey = anim.frames[idx]!;
@@ -1110,8 +1177,8 @@ export class IsoRenderer {
       sp.anchor.set(bx, 1.0);
       sp.x = 0;
       sp.y = 0;
-      sp.scale.set(effScale, effScale);
-      const topH = Math.max(52, Math.min(240, frameEntry.rect.h * effScale));
+      sp.scale.set(flipX * effScale, effScale);
+      const topH = Math.max(52, Math.min(360, frameEntry.rect.h * effScale));
       if (Math.abs(vis.spriteTopOffset - topH) > 4) {
         vis.spriteTopOffset = topH;
         this.updateStatusOverlays(vis);

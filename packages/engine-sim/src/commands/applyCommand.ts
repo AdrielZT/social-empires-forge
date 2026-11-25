@@ -1,19 +1,39 @@
 import {
   tileToExpansionId,
   type CommandPayload,
+  type CostType,
   type GameItem,
   type MapState,
   type RawMapItemTuple,
   type SaveFile
 } from "@sef/shared-types";
 import {
+  ACTIVATE_NEST_CASH,
+  ACTIVATE_NEST_GOLD,
   BUILDING_BLACKSMITH_IDS,
   BUILDING_UNIVERSITY_IDS,
   COLLECT_MULTIPLIERS,
+  COLLECT_VARIABLE_IDS,
+  DRAGON_NEST_HAS_EGG,
+  DRAGON_NEST_IDS,
+  DRAGON_STEP_CASH_BIG,
+  DRAGON_STEP_CASH_SMALL,
+  GOLD_ORE_IDS,
+  ID_BUILDING_REGEN_GOLD,
+  ID_BUILDING_REGEN_STONE,
+  MONSTER_NEST_IDS,
+  MONSTER_STEP_CASH,
+  NEST_STEP_COOLDOWN_SEC,
+  NEST_TOTAL_STEPS,
+  REGEN_ORE_DURATION_SEC,
+  STONE_ORE_IDS,
   canAfford,
+  computeEarlyUnlockCashCost,
   computeEffectiveItemCost,
+  computeFarmReplantWoodCost,
   computeLevelFromXp,
   computeMarketPrice,
+  computeProducerYield,
   computeSellRefund,
   computeTrainingFoodCost,
   creditResource,
@@ -21,12 +41,21 @@ import {
   type ResourceBag
 } from "../economy/formulas.js";
 
+export interface LevelTableEntry {
+  level?: number | string;
+  name?: string;
+  exp_required?: number | string;
+  reward_type?: string;
+  reward_amount?: number | string;
+}
+
 export interface CommandExecutionContext {
   itemsById: ReadonlyMap<number, GameItem>;
-  levels: readonly { level?: number | string; exp_required?: number | string }[];
+  levels: readonly LevelTableEntry[];
   expansionPrices: readonly { coins?: number | string; cash?: number | string; level?: number | string }[];
   globals: Readonly<Record<string, unknown>>;
   nowSec: number;
+  adminMode?: boolean;
 }
 
 export interface CommandResult {
@@ -37,7 +66,14 @@ export interface CommandResult {
 
 export type CommandSideEvent =
   | { type: "resource_delta"; coins?: number; wood?: number; stone?: number; food?: number; cash?: number; xp?: number; mana?: number }
-  | { type: "level_up"; level: number }
+  | {
+      type: "level_up";
+      level: number;
+      rankName: string;
+      rewardType: CostType;
+      rewardAmount: number;
+      manaBonus: number;
+    }
   | { type: "item_placed"; itemId: number; tx: number; ty: number }
   | { type: "item_removed"; itemId: number; tx: number; ty: number }
   | { type: "sfx"; name: string };
@@ -45,6 +81,7 @@ export type CommandSideEvent =
 const NON_GRAVEYARD_UNIT_IDS = new Set([500, 501]); // Peasants
 const NON_GRAVEYARD_SUBCATS = new Set([76, 77, 78, 79]); // Cow, sheep, horse, boar
 const HERO_UNIT_IDS = new Set([533, 534, 535, 550, 554, 555, 556, 557]);
+const SUBCAT_FARM = 122;
 
 function getBag(save: SaveFile, map: MapState): ResourceBag {
   const priv = save.privateState;
@@ -67,6 +104,19 @@ function commitBag(save: SaveFile, map: MapState, bag: ResourceBag): void {
   save.privateState.mana = bag.mana;
 }
 
+function parseCostType(raw: unknown): CostType {
+  if (raw === "g" || raw === "w" || raw === "s" || raw === "f" || raw === "c") return raw;
+  return "c";
+}
+
+function isItemUnlockedForPlayer(save: SaveFile, map: MapState, def: GameItem, adminMode?: boolean): boolean {
+  if (adminMode) return true;
+  if (map.level >= def.minLevel) return true;
+  const early = save.privateState.unlockedEarlyBuildings;
+  if (Array.isArray(early) && early.map(Number).includes(def.id)) return true;
+  return false;
+}
+
 function addXp(save: SaveFile, map: MapState, amount: number, ctx: CommandExecutionContext, events: CommandSideEvent[]): void {
   if (amount <= 0) return;
   const prevLevel = map.level;
@@ -74,13 +124,36 @@ function addXp(save: SaveFile, map: MapState, amount: number, ctx: CommandExecut
   const nextLevel = computeLevelFromXp(map.xp, ctx.levels);
   if (nextLevel > prevLevel) {
     map.level = nextLevel;
-    // Mana reward per level starting at START_LEVEL_MANA_REWARD (36)
+    const bag = getBag(save, map);
     const startLvl = Number(ctx.globals.START_LEVEL_MANA_REWARD ?? 36);
     const manaPerLvl = Number(ctx.globals.MANA_REWARD_PER_LEVEL ?? 2);
-    if (nextLevel >= startLvl) {
-      save.privateState.mana = Number(save.privateState.mana ?? 0) + (nextLevel - prevLevel) * manaPerLvl;
+
+    for (let lvl = prevLevel + 1; lvl <= nextLevel; lvl++) {
+      const entry = ctx.levels[lvl - 1];
+      const rankName = String(entry?.name ?? `Level ${lvl}`);
+      const rewardType = entry?.reward_type ? parseCostType(entry.reward_type) : "c";
+      const rewardAmount = entry?.reward_amount !== undefined ? Math.max(0, Number(entry.reward_amount) || 0) : 1;
+      const manaBonus = lvl >= startLvl ? manaPerLvl : 0;
+
+      if (rewardAmount > 0) {
+        creditResource(bag, rewardType, rewardAmount);
+      }
+      if (manaBonus > 0) {
+        bag.mana += manaBonus;
+      }
+
+      events.push({
+        type: "level_up",
+        level: lvl,
+        rankName,
+        rewardType,
+        rewardAmount,
+        manaBonus
+      });
     }
-    events.push({ type: "level_up", level: nextLevel }, { type: "sfx", name: "LevelUpSound" });
+
+    commitBag(save, map, bag);
+    events.push({ type: "sfx", name: "LevelUpSound" });
   }
 }
 
@@ -151,22 +224,44 @@ export function applyCommand(
         return { ok: false, error: `Tile (${tx},${ty}) is outside owned territory`, events };
       }
 
-      const cost = computeEffectiveItemCost(def, {
-        hasBlacksmith: hasAnyBuilding(map, BUILDING_BLACKSMITH_IDS),
-        hasUniversity: hasAnyBuilding(map, BUILDING_UNIVERSITY_IDS)
-      });
-      const foodCost = computeTrainingFoodCost(def, Number(ctx.globals.FOOD_PER_GOLD_INTRAINING ?? 0.25));
-
-      if (!canAfford(bag, def.costType, cost) || bag.food < foodCost) {
-        return { ok: false, error: "Insufficient resources", events };
+      const isInternalRegen = itemId === ID_BUILDING_REGEN_GOLD || itemId === ID_BUILDING_REGEN_STONE;
+      if (!ctx.adminMode && !isInternalRegen) {
+        if (!def.inStore) {
+          return { ok: false, error: `Item ${itemId} is not available in the store`, events };
+        }
+        if (!isItemUnlockedForPlayer(save, map, def, false)) {
+          return { ok: false, error: `Level ${def.minLevel} required for ${def.name}`, events };
+        }
       }
-      debitResource(bag, def.costType, cost);
-      bag.food -= foodCost;
+
+      const cost = isInternalRegen
+        ? 0
+        : computeEffectiveItemCost(def, {
+            hasBlacksmith: hasAnyBuilding(map, BUILDING_BLACKSMITH_IDS),
+            hasUniversity: hasAnyBuilding(map, BUILDING_UNIVERSITY_IDS)
+          });
+      const foodCost = isInternalRegen
+        ? 0
+        : computeTrainingFoodCost(def, Number(ctx.globals.FOOD_PER_GOLD_INTRAINING ?? 0.25));
+
+      if (!ctx.adminMode) {
+        if (!canAfford(bag, def.costType, cost) || bag.food < foodCost) {
+          return { ok: false, error: "Insufficient resources", events };
+        }
+        debitResource(bag, def.costType, cost);
+        bag.food -= foodCost;
+      } else {
+        // Admin mode: allow placing freely even if current balance is below item cost
+        if (canAfford(bag, def.costType, cost)) debitResource(bag, def.costType, cost);
+        if (bag.food >= foodCost) bag.food -= foodCost;
+      }
 
       const tuple: RawMapItemTuple = [itemId, tx, ty, orientation, ctx.nowSec, 0, [], {}];
       map.items.push(tuple);
       commitBag(save, map, bag);
-      addXp(save, map, def.xp, ctx, events);
+      if (!isInternalRegen) {
+        addXp(save, map, def.xp, ctx, events);
+      }
       events.push(
         { type: "item_placed", itemId, tx, ty },
         { type: "sfx", name: def.type === "b" ? "BuildSound" : "FinalConstruc1Sound" }
@@ -184,8 +279,11 @@ export function applyCommand(
       if (!def || def.costUnitCash <= 0) {
         return { ok: false, error: `Item ${itemId} cannot be bought with cash`, events };
       }
-      if (!debitResource(bag, "c", def.costUnitCash)) {
+      if (!ctx.adminMode && !debitResource(bag, "c", def.costUnitCash)) {
         return { ok: false, error: "Insufficient cash", events };
+      }
+      if (ctx.adminMode && canAfford(bag, "c", def.costUnitCash)) {
+        debitResource(bag, "c", def.costUnitCash);
       }
       map.items.push([itemId, tx, ty, orientation, ctx.nowSec, 0, [], {}]);
       commitBag(save, map, bag);
@@ -237,7 +335,9 @@ export function applyCommand(
 
       const def = ctx.itemsById.get(itemId);
       if (def) {
-        if (reason === "KILL" || cmd === "kill") {
+        if (reason === "HARVEST") {
+          // Canonical `Constants.SELL_REASON_HARVEST` (`IsoElement.as:880-882`): depleted resource disappears with 0 sell refund
+        } else if (reason === "KILL" || cmd === "kill") {
           // PR #48 fix: honor checkPutToGraveyard flag; exclude peasants, animals, trolls
           const allowGrave = args[6] !== undefined ? Boolean(Number(args[6])) : true;
           if (HERO_UNIT_IDS.has(itemId)) {
@@ -259,7 +359,10 @@ export function applyCommand(
           commitBag(save, map, bag);
         }
       }
-      events.push({ type: "item_removed", itemId, tx, ty }, { type: "sfx", name: "Collection2Sound" });
+      events.push({ type: "item_removed", itemId, tx, ty });
+      if (reason !== "HARVEST") {
+        events.push({ type: "sfx", name: "Collection2Sound" });
+      }
       return { ok: true, events };
     }
 
@@ -275,8 +378,11 @@ export function applyCommand(
       }
       const nextDef = ctx.itemsById.get(curDef.upgradesTo);
       if (!nextDef) return { ok: false, error: `Upgrade target ${curDef.upgradesTo} missing`, events };
-      if (!debitResource(bag, nextDef.costType, nextDef.cost)) {
+      if (!ctx.adminMode && !debitResource(bag, nextDef.costType, nextDef.cost)) {
         return { ok: false, error: "Insufficient resources for upgrade", events };
+      }
+      if (ctx.adminMode && canAfford(bag, nextDef.costType, nextDef.cost)) {
+        debitResource(bag, nextDef.costType, nextDef.cost);
       }
       map.items[idx]![0] = nextDef.id;
       map.items[idx]![4] = ctx.nowSec;
@@ -287,16 +393,20 @@ export function applyCommand(
     }
 
     case "collect_new": {
-      // args: [tx, ty, itemId, multiplierIdx?, fixedResourceAmount?]
+      // args: [tx, ty, itemId, multiplierIdx?, spawnTx?, spawnTy?]
       const tx = toInt(args[0]);
       const ty = toInt(args[1]);
       const itemId = toInt(args[2]);
-      const multIdx = Math.max(0, Math.min(COLLECT_MULTIPLIERS.length - 1, toInt(args[3], 2)));
+      const multIdxArg = toInt(args[3], 2);
       const idx = findItemIndex(map, tx, ty, itemId);
       if (idx < 0) return { ok: false, error: `Collectable ${itemId} not found at (${tx},${ty})`, events };
 
       const def = ctx.itemsById.get(itemId);
       if (!def) return { ok: false, error: `Unknown item ${itemId}`, events };
+
+      const tuple = map.items[idx]!;
+      const garrison = tuple[6];
+      const attrs = tuple[7];
 
       // PR #48 fix: harvesting trees/stones/gold rocks yields fixed client amount (no +20% villager inflation)
       const isResourceNode =
@@ -306,11 +416,41 @@ export function applyCommand(
         def.subcatFunctional === 125 ||
         def.subcatFunctional === 126 ||
         def.subcatFunctional === 127;
-      const mult = isResourceNode ? 1.0 : (COLLECT_MULTIPLIERS[multIdx] ?? 1.0);
-      const amount = Math.round(def.collect * mult);
+
+      const isFarm = def.subcatFunctional === SUBCAT_FARM;
+      const isVariableProducer = COLLECT_VARIABLE_IDS.has(itemId);
+
+      let amount: number;
+      if (isResourceNode) {
+        amount = Math.round(def.collect);
+      } else if (isVariableProducer) {
+        const cpIdx = Math.max(1, Math.min(4, Number(attrs.cp ?? multIdxArg) || 2));
+        amount = computeProducerYield(def.collect, Math.max(1, garrison.length), cpIdx);
+        attrs.cp = 0;
+      } else if (isFarm) {
+        amount = Math.round(def.collect);
+        const replantWood = computeFarmReplantWoodCost(def.collect);
+        if (garrison.length > 0) {
+          if (bag.wood >= replantWood) {
+            bag.wood -= replantWood;
+          } else {
+            // Canonical `IsoElement.as:1730-1750`: insufficient wood to replant ejects the farmer
+            const ejectedId = garrison.shift()!;
+            const spawnTx = args[4] !== undefined ? toInt(args[4], tx + 1) : tx + 1;
+            const spawnTy = args[5] !== undefined ? toInt(args[5], ty + 1) : ty + 1;
+            map.items.push([ejectedId, spawnTx, spawnTy, 4, ctx.nowSec, 0, [], {}]);
+            events.push({ type: "item_placed", itemId: ejectedId, tx: spawnTx, ty: spawnTy });
+          }
+        }
+      } else {
+        const multIdx = Math.max(0, Math.min(COLLECT_MULTIPLIERS.length - 1, multIdxArg));
+        const mult = COLLECT_MULTIPLIERS[multIdx] ?? 1.0;
+        amount = Math.round(def.collect * mult);
+      }
+
       const resType = def.collectType || "g";
       creditResource(bag, resType, amount);
-      map.items[idx]![4] = ctx.nowSec;
+      tuple[4] = ctx.nowSec;
       commitBag(save, map, bag);
       addXp(save, map, def.collectXp, ctx, events);
       events.push({ type: "sfx", name: "Collection2Sound" });
@@ -437,16 +577,25 @@ export function applyCommand(
       const unitDef = ctx.itemsById.get(unitId);
       if (!unitDef) return { ok: false, error: `Unknown unit ${unitId}`, events };
 
+      if (!isItemUnlockedForPlayer(save, map, unitDef, ctx.adminMode)) {
+        return { ok: false, error: `Level ${unitDef.minLevel} required to train ${unitDef.name}`, events };
+      }
+
       const cost = computeEffectiveItemCost(unitDef, {
         hasBlacksmith: hasAnyBuilding(map, BUILDING_BLACKSMITH_IDS),
         hasUniversity: hasAnyBuilding(map, BUILDING_UNIVERSITY_IDS)
       });
       const foodCost = computeTrainingFoodCost(unitDef, Number(ctx.globals.FOOD_PER_GOLD_INTRAINING ?? 0.25));
-      if (!canAfford(bag, unitDef.costType, cost) || bag.food < foodCost) {
-        return { ok: false, error: "Insufficient resources for training", events };
+      if (!ctx.adminMode) {
+        if (!canAfford(bag, unitDef.costType, cost) || bag.food < foodCost) {
+          return { ok: false, error: "Insufficient resources for training", events };
+        }
+        debitResource(bag, unitDef.costType, cost);
+        bag.food -= foodCost;
+      } else {
+        if (canAfford(bag, unitDef.costType, cost)) debitResource(bag, unitDef.costType, cost);
+        if (bag.food >= foodCost) bag.food -= foodCost;
       }
-      debitResource(bag, unitDef.costType, cost);
-      bag.food -= foodCost;
       commitBag(save, map, bag);
 
       const building = map.items[idx]!;
@@ -518,26 +667,82 @@ export function applyCommand(
     }
 
     case "push_unit": {
+      // args: [bTx, bTy, bId, unitId, unitTx?, unitTy?]
       const tx = toInt(args[0]);
       const ty = toInt(args[1]);
       const bId = toInt(args[2]);
       const unitId = toInt(args[3]);
-      const idx = findItemIndex(map, tx, ty, bId);
-      if (idx < 0) return { ok: false, error: "Garrison building not found", events };
-      map.items[idx]![6].push(unitId);
+      const bIdx = findItemIndex(map, tx, ty, bId);
+      if (bIdx < 0) return { ok: false, error: "Garrison building not found", events };
+      const bDef = ctx.itemsById.get(bId);
+      const building = map.items[bIdx]!;
+      const cap = bDef && bDef.unitCapacity > 0 ? bDef.unitCapacity : 6;
+      if (building[6].length >= cap) {
+        return { ok: false, error: "Building capacity reached", events };
+      }
+
+      // If villager map coordinates are supplied, remove the unit tuple from the map so it disappears inside
+      if (args[4] !== undefined && args[5] !== undefined) {
+        const uTx = toInt(args[4]);
+        const uTy = toInt(args[5]);
+        let uIdx = findItemIndex(map, uTx, uTy, unitId);
+        if (uIdx < 0) {
+          // Fallback: nearest matching unitId in map (villager may have walked away from its initial saved tile)
+          uIdx = map.items.findIndex((it) => it[0] === unitId);
+        }
+        if (uIdx >= 0) {
+          const removed = map.items[uIdx]!;
+          map.items.splice(uIdx, 1);
+          events.push({ type: "item_removed", itemId: unitId, tx: removed[1], ty: removed[2] });
+        }
+      }
+
+      building[6].push(unitId);
+      if (bDef && bDef.subcatFunctional === SUBCAT_FARM) {
+        // Start canonical ~30s farm sowing cycle when farmer enters
+        building[4] = ctx.nowSec;
+        events.push({ type: "sfx", name: "FarmSound" });
+      }
       return { ok: true, events };
     }
 
     case "pop_unit": {
+      // args: [bTx, bTy, bId, unitId, spawnTx?, spawnTy?]
       const tx = toInt(args[0]);
       const ty = toInt(args[1]);
       const bId = toInt(args[2]);
       const unitId = toInt(args[3]);
       const idx = findItemIndex(map, tx, ty, bId);
       if (idx < 0) return { ok: false, error: "Garrison building not found", events };
-      const list = map.items[idx]![6];
-      const uIdx = list.indexOf(unitId);
-      if (uIdx >= 0) list.splice(uIdx, 1);
+      const building = map.items[idx]!;
+      const list = building[6];
+      const uIdx = unitId > 0 ? list.indexOf(unitId) : list.length > 0 ? 0 : -1;
+      if (uIdx < 0) return { ok: false, error: "Unit not garrisoned", events };
+      const poppedId = list.splice(uIdx, 1)[0]!;
+      if (list.length === 0) {
+        building[7].cp = 0;
+      }
+      if (args[4] !== undefined && args[5] !== undefined) {
+        const spawnTx = toInt(args[4], tx + 1);
+        const spawnTy = toInt(args[5], ty + 1);
+        map.items.push([poppedId, spawnTx, spawnTy, 4, ctx.nowSec, 0, [], {}]);
+        events.push({ type: "item_placed", itemId: poppedId, tx: spawnTx, ty: spawnTy });
+      }
+      return { ok: true, events };
+    }
+
+    case "activate": {
+      // Canonical `PopupCollect.as` (`CMD_ACTIVATE`): args [tx, ty, itemId, cpIndex (1..4)]
+      const tx = toInt(args[0]);
+      const ty = toInt(args[1]);
+      const itemId = toInt(args[2]);
+      const cpIndex = Math.max(1, Math.min(4, toInt(args[3], 1)));
+      const idx = findItemIndex(map, tx, ty, itemId);
+      if (idx < 0) return { ok: false, error: `Building ${itemId} not found at (${tx},${ty})`, events };
+      const building = map.items[idx]!;
+      building[7].cp = cpIndex;
+      building[4] = ctx.nowSec;
+      events.push({ type: "sfx", name: "ButtonClickSound" });
       return { ok: true, events };
     }
 
@@ -728,9 +933,14 @@ export function applyCommand(
 
     case "unlock_building": {
       const buildingId = toInt(args[0]);
-      const cashCost = toInt(args[1], 0);
-      if (cashCost > 0 && !debitResource(bag, "c", cashCost)) {
+      const def = ctx.itemsById.get(buildingId);
+      const canonicalCost = def ? computeEarlyUnlockCashCost(def.minLevel) : 1;
+      const cashCost = args[1] !== undefined ? Math.max(0, toInt(args[1], canonicalCost)) : canonicalCost;
+      if (!ctx.adminMode && cashCost > 0 && !debitResource(bag, "c", cashCost)) {
         return { ok: false, error: "Insufficient cash", events };
+      }
+      if (ctx.adminMode && cashCost > 0 && canAfford(bag, "c", cashCost)) {
+        debitResource(bag, "c", cashCost);
       }
       const list = Array.isArray(save.privateState.unlockedEarlyBuildings)
         ? (save.privateState.unlockedEarlyBuildings as number[])
@@ -738,6 +948,266 @@ export function applyCommand(
       if (!list.includes(buildingId)) list.push(buildingId);
       save.privateState.unlockedEarlyBuildings = list;
       commitBag(save, map, bag);
+      events.push({ type: "sfx", name: "AchievementSound" });
+      return { ok: true, events };
+    }
+
+    case "spawn_regen_node": {
+      // Canonical `IsoElement.as:897-924`: depleted stone/gold ore leaves regPiedras (81) or regOro (80)
+      const tx = toInt(args[0]);
+      const ty = toInt(args[1]);
+      const regenId = toInt(args[2]);
+      if (regenId !== ID_BUILDING_REGEN_GOLD && regenId !== ID_BUILDING_REGEN_STONE) {
+        return { ok: false, error: `Invalid regen node ${regenId}`, events };
+      }
+      map.items.push([regenId, tx, ty, 0, ctx.nowSec, 0, [], {}]);
+      events.push({ type: "item_placed", itemId: regenId, tx, ty });
+      return { ok: true, events };
+    }
+
+    case "finish_regen": {
+      // Canonical `IsoElement.as:793-826`: regen crater turns back into fresh stone/gold ore after 3h
+      const tx = toInt(args[0]);
+      const ty = toInt(args[1]);
+      const regenId = toInt(args[2]);
+      const idx = findItemIndex(map, tx, ty, regenId);
+      if (idx < 0) return { ok: false, error: `Regen node ${regenId} not found at (${tx},${ty})`, events };
+      const tuple = map.items[idx]!;
+      const elapsed = ctx.nowSec - tuple[4];
+      if (!ctx.adminMode && elapsed < REGEN_ORE_DURATION_SEC) {
+        return { ok: false, error: "Resource not yet regenerated", events };
+      }
+      const pool = regenId === ID_BUILDING_REGEN_GOLD ? GOLD_ORE_IDS : STONE_ORE_IDS;
+      const freshId = pool[Math.abs(tx * 31 + ty * 17 + ctx.nowSec) % pool.length]!;
+      tuple[0] = freshId;
+      tuple[4] = ctx.nowSec;
+      events.push({ type: "item_placed", itemId: freshId, tx, ty });
+      return { ok: true, events };
+    }
+
+    case "activate_dragon": {
+      // Canonical `PopupInactiveNest.as` + `op.py`: activate Dragon Nest with 100k gold or 50 cash
+      const withCash = Boolean(Number(args[0] ?? 0));
+      if (!ctx.adminMode) {
+        if (withCash) {
+          if (!debitResource(bag, "c", ACTIVATE_NEST_CASH)) return { ok: false, error: "Insufficient cash", events };
+        } else {
+          if (!debitResource(bag, "g", ACTIVATE_NEST_GOLD)) return { ok: false, error: "Insufficient gold", events };
+        }
+      } else {
+        if (withCash && canAfford(bag, "c", ACTIVATE_NEST_CASH)) debitResource(bag, "c", ACTIVATE_NEST_CASH);
+        if (!withCash && canAfford(bag, "g", ACTIVATE_NEST_GOLD)) debitResource(bag, "g", ACTIVATE_NEST_GOLD);
+      }
+      save.privateState.dragonNestActive = 1;
+      save.privateState.dragonNumber = 0;
+      save.privateState.stepNumber = 0;
+      save.privateState.timeStampTakeCare = 0;
+      commitBag(save, map, bag);
+      events.push({ type: "sfx", name: "AchievementSound" });
+      return { ok: true, events };
+    }
+
+    case "next_step_dragon": {
+      if (Number(save.privateState.dragonNestActive ?? 0) !== 1) {
+        return { ok: false, error: "Dragon Nest is not active", events };
+      }
+      const step = Number(save.privateState.stepNumber ?? 0);
+      if (step >= NEST_TOTAL_STEPS) {
+        return { ok: false, error: "Dragon is already ready to collect", events };
+      }
+      const lastTs = Number(save.privateState.timeStampTakeCare ?? 0);
+      if (!ctx.adminMode && lastTs > 0 && ctx.nowSec - lastTs < NEST_STEP_COOLDOWN_SEC) {
+        return { ok: false, error: "Dragon care cooldown active", events };
+      }
+      save.privateState.stepNumber = step + 1;
+      save.privateState.timeStampTakeCare = ctx.nowSec;
+      addXp(save, map, 15, ctx, events);
+      events.push({ type: "sfx", name: "Collection2Sound" });
+      return { ok: true, events };
+    }
+
+    case "buy_step_dragon": {
+      if (Number(save.privateState.dragonNestActive ?? 0) !== 1) {
+        return { ok: false, error: "Dragon Nest is not active", events };
+      }
+      const dragonIdx = Math.max(0, Math.min(DRAGON_NEST_IDS.length - 1, Number(save.privateState.dragonNumber ?? 0)));
+      const step = Number(save.privateState.stepNumber ?? 0);
+      if (step >= NEST_TOTAL_STEPS) {
+        return { ok: false, error: "Dragon is already ready to collect", events };
+      }
+      const hasEgg = DRAGON_NEST_HAS_EGG[dragonIdx] ?? true;
+      const cashCost = hasEgg ? DRAGON_STEP_CASH_SMALL : DRAGON_STEP_CASH_BIG;
+      if (!ctx.adminMode && !debitResource(bag, "c", cashCost)) {
+        return { ok: false, error: "Insufficient cash", events };
+      }
+      if (ctx.adminMode && canAfford(bag, "c", cashCost)) {
+        debitResource(bag, "c", cashCost);
+      }
+      save.privateState.stepNumber = step + 1;
+      save.privateState.timeStampTakeCare = 0;
+      commitBag(save, map, bag);
+      addXp(save, map, 15, ctx, events);
+      events.push({ type: "sfx", name: "Collection2Sound" });
+      return { ok: true, events };
+    }
+
+    case "next_dragon": {
+      if (Number(save.privateState.dragonNestActive ?? 0) !== 1) {
+        return { ok: false, error: "Dragon Nest is not active", events };
+      }
+      const dragonIdx = Number(save.privateState.dragonNumber ?? 0);
+      const step = Number(save.privateState.stepNumber ?? 0);
+      if (!ctx.adminMode && step < NEST_TOTAL_STEPS) {
+        return { ok: false, error: "Dragon training not finished yet", events };
+      }
+      const dragonId = DRAGON_NEST_IDS[dragonIdx];
+      if (dragonId !== undefined) {
+        if (args[0] !== undefined && args[1] !== undefined) {
+          const tx = toInt(args[0], 50);
+          const ty = toInt(args[1], 50);
+          map.items.push([dragonId, tx, ty, 4, ctx.nowSec, 0, [], {}]);
+          events.push({ type: "item_placed", itemId: dragonId, tx, ty });
+        } else {
+          map.store[String(dragonId)] = (map.store[String(dragonId)] ?? 0) + 1;
+        }
+        const def = ctx.itemsById.get(dragonId);
+        if (def) addXp(save, map, Math.max(50, def.xp), ctx, events);
+      }
+      const nextIdx = dragonIdx + 1;
+      if (nextIdx >= DRAGON_NEST_IDS.length) {
+        save.privateState.dragonNestActive = 0;
+        save.privateState.dragonNumber = 0;
+      } else {
+        save.privateState.dragonNumber = nextIdx;
+      }
+      save.privateState.stepNumber = 0;
+      save.privateState.timeStampTakeCare = 0;
+      events.push({ type: "sfx", name: "AchievementSound" });
+      return { ok: true, events };
+    }
+
+    case "desactivate_dragon": {
+      save.privateState.dragonNestActive = 0;
+      save.privateState.dragonNumber = 0;
+      save.privateState.stepNumber = 0;
+      save.privateState.timeStampTakeCare = 0;
+      return { ok: true, events };
+    }
+
+    case "activate_monster": {
+      const withCash = Boolean(Number(args[0] ?? 0));
+      if (!ctx.adminMode) {
+        if (withCash) {
+          if (!debitResource(bag, "c", ACTIVATE_NEST_CASH)) return { ok: false, error: "Insufficient cash", events };
+        } else {
+          if (!debitResource(bag, "g", ACTIVATE_NEST_GOLD)) return { ok: false, error: "Insufficient gold", events };
+        }
+      } else {
+        if (withCash && canAfford(bag, "c", ACTIVATE_NEST_CASH)) debitResource(bag, "c", ACTIVATE_NEST_CASH);
+        if (!withCash && canAfford(bag, "g", ACTIVATE_NEST_GOLD)) debitResource(bag, "g", ACTIVATE_NEST_GOLD);
+      }
+      save.privateState.monsterNestActive = 1;
+      save.privateState.monsterNumber = 0;
+      save.privateState.stepMonsterNumber = 0;
+      save.privateState.timeStampTakeCareMonster = 0;
+      commitBag(save, map, bag);
+      events.push({ type: "sfx", name: "AchievementSound" });
+      return { ok: true, events };
+    }
+
+    case "next_step_monster": {
+      if (Number(save.privateState.monsterNestActive ?? 0) !== 1) {
+        return { ok: false, error: "Monsters Nest is not active", events };
+      }
+      const step = Number(save.privateState.stepMonsterNumber ?? 0);
+      if (step >= NEST_TOTAL_STEPS) {
+        return { ok: false, error: "Monster is already ready to collect", events };
+      }
+      const lastTs = Number(save.privateState.timeStampTakeCareMonster ?? 0);
+      if (!ctx.adminMode && lastTs > 0 && ctx.nowSec - lastTs < NEST_STEP_COOLDOWN_SEC) {
+        return { ok: false, error: "Monster care cooldown active", events };
+      }
+      save.privateState.stepMonsterNumber = step + 1;
+      save.privateState.timeStampTakeCareMonster = ctx.nowSec;
+      addXp(save, map, 15, ctx, events);
+      events.push({ type: "sfx", name: "Collection2Sound" });
+      return { ok: true, events };
+    }
+
+    case "buy_step_monster": {
+      if (Number(save.privateState.monsterNestActive ?? 0) !== 1) {
+        return { ok: false, error: "Monsters Nest is not active", events };
+      }
+      const step = Number(save.privateState.stepMonsterNumber ?? 0);
+      if (step >= NEST_TOTAL_STEPS) {
+        return { ok: false, error: "Monster is already ready to collect", events };
+      }
+      if (!ctx.adminMode && !debitResource(bag, "c", MONSTER_STEP_CASH)) {
+        return { ok: false, error: "Insufficient cash", events };
+      }
+      if (ctx.adminMode && canAfford(bag, "c", MONSTER_STEP_CASH)) {
+        debitResource(bag, "c", MONSTER_STEP_CASH);
+      }
+      save.privateState.stepMonsterNumber = step + 1;
+      save.privateState.timeStampTakeCareMonster = 0;
+      commitBag(save, map, bag);
+      addXp(save, map, 15, ctx, events);
+      events.push({ type: "sfx", name: "Collection2Sound" });
+      return { ok: true, events };
+    }
+
+    case "next_monster": {
+      if (Number(save.privateState.monsterNestActive ?? 0) !== 1) {
+        return { ok: false, error: "Monsters Nest is not active", events };
+      }
+      const monsterIdx = Number(save.privateState.monsterNumber ?? 0);
+      const step = Number(save.privateState.stepMonsterNumber ?? 0);
+      if (!ctx.adminMode && step < NEST_TOTAL_STEPS) {
+        return { ok: false, error: "Monster training not finished yet", events };
+      }
+      const monsterId = MONSTER_NEST_IDS[monsterIdx];
+      if (monsterId !== undefined) {
+        if (args[0] !== undefined && args[1] !== undefined) {
+          const tx = toInt(args[0], 50);
+          const ty = toInt(args[1], 50);
+          map.items.push([monsterId, tx, ty, 4, ctx.nowSec, 0, [], {}]);
+          events.push({ type: "item_placed", itemId: monsterId, tx, ty });
+        } else {
+          map.store[String(monsterId)] = (map.store[String(monsterId)] ?? 0) + 1;
+        }
+        const def = ctx.itemsById.get(monsterId);
+        if (def) addXp(save, map, Math.max(50, def.xp), ctx, events);
+      }
+      const nextIdx = monsterIdx + 1;
+      if (nextIdx >= MONSTER_NEST_IDS.length) {
+        save.privateState.monsterNestActive = 0;
+        save.privateState.monsterNumber = 0;
+      } else {
+        save.privateState.monsterNumber = nextIdx;
+      }
+      save.privateState.stepMonsterNumber = 0;
+      save.privateState.timeStampTakeCareMonster = 0;
+      events.push({ type: "sfx", name: "AchievementSound" });
+      return { ok: true, events };
+    }
+
+    case "desactivate_monster": {
+      save.privateState.monsterNestActive = 0;
+      save.privateState.monsterNumber = 0;
+      save.privateState.stepMonsterNumber = 0;
+      save.privateState.timeStampTakeCareMonster = 0;
+      return { ok: true, events };
+    }
+
+    case "neighbor_assist": {
+      // Canonical neighbor visit assist (`PopOverVisit` / `IsoElement.as`): +10 Gold, +3 XP
+      const neighborId = String(args[0] ?? "king");
+      const assists = getStringNumMap(save.privateState, "neighborAssists");
+      assists[neighborId] = (assists[neighborId] ?? 0) + 1;
+      creditResource(bag, "g", 10);
+      commitBag(save, map, bag);
+      addXp(save, map, 3, ctx, events);
+      events.push({ type: "sfx", name: "Collection2Sound" });
       return { ok: true, events };
     }
 

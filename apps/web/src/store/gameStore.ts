@@ -1,13 +1,49 @@
 import { create } from "zustand";
-import type { GameItem, GoalDef, Locale, MagicSpellDef, SaveFile, TerrainSkin } from "@sef/shared-types";
+import type { CostType, GameItem, GoalDef, LevelDef, Locale, MagicSpellDef, SaveFile, TerrainSkin } from "@sef/shared-types";
 import type { RendererMetrics } from "@sef/engine-render";
 import type { MusicTrackId } from "@sef/engine-audio";
 import type { StanceMode, UnitBehaviorProfile } from "@sef/engine-sim";
 import { gameApi } from "../api/gameApi.js";
 
-export type PlayMode = "village" | "quest" | "survival" | "pvp";
+export type PlayMode = "village" | "quest" | "survival" | "pvp" | "visit";
+
+export type CursorTool = "normal" | "bulldoze" | "box_select";
 
 export type ActiveModal = null | "shop" | "worldMap" | "systems" | "empires";
+
+export interface LevelUpNotice {
+  level: number;
+  rankName: string;
+  rewardType: CostType;
+  rewardAmount: number;
+  manaBonus: number;
+}
+
+export interface NestModalTarget {
+  kind: "dragon" | "monster";
+  tx: number;
+  ty: number;
+}
+
+export interface CollectPickerTarget {
+  uid: number;
+  itemId: number;
+  tx: number;
+  ty: number;
+  name: string;
+  collectType: string;
+  baseCollect: number;
+  workerCount: number;
+}
+
+export interface VisitingNeighborState {
+  id: string;
+  name: string;
+  level: number;
+  mapKey: string;
+  isKing: boolean;
+  assistsRemaining: number;
+}
 
 export interface MapListEntry {
   key: string;
@@ -42,12 +78,19 @@ export interface SelectedEntitySummary {
   orientation: number;
   animState: number;
   stance: StanceMode;
+  subcatFunctional: number;
   limitGauge: number;
   limitMax: number;
   specialCooldownSecs: number[];
   collectReady: boolean;
   collectAmount: number;
   collectType: string;
+  unitCapacity: number;
+  garrison: number[];
+  productionCp: number;
+  productionElapsedSec: number;
+  productionDurationSec: number;
+  statusBadge: "collect" | "zzz" | "ready_nest" | null;
   queue: number[];
   behavior?: UnitBehaviorProfile;
 }
@@ -78,6 +121,16 @@ export interface BattleStatus {
   finished: null | "victory" | "defeat";
 }
 
+const ADMIN_MODE_LS_KEY = "sef_admin_mode_v1";
+
+function readInitialAdminMode(): boolean {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem(ADMIN_MODE_LS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 interface GameStoreState {
   locale: Locale;
   loading: boolean;
@@ -89,6 +142,8 @@ interface GameStoreState {
   itemsById: Map<number, GameItem>;
   magics: MagicSpellDef[];
   goals: GoalDef[];
+  levels: LevelDef[];
+  globals: Record<string, unknown>;
   behaviorsById: Map<number, UnitBehaviorProfile>;
   collections: Record<string, unknown>;
   localizationEn: Record<string, string>;
@@ -99,6 +154,8 @@ interface GameStoreState {
   // Active persistent empire & mode
   activeSave: SaveFile | null;
   playMode: PlayMode;
+  adminMode: boolean;
+  cursorTool: CursorTool;
   activeBiome: TerrainSkin;
   activeMusic: MusicTrackId;
   musicEnabled: boolean;
@@ -107,6 +164,10 @@ interface GameStoreState {
   boxSelectInVillage: boolean;
   activeModal: ActiveModal;
   systemsTab: "goals" | "market" | "storage" | "graveyard" | "specials";
+  levelUpQueue: LevelUpNotice[];
+  activeNestModal: NestModalTarget | null;
+  collectPickerTarget: CollectPickerTarget | null;
+  visitingNeighbor: VisitingNeighborState | null;
 
   // Interactive tools & QoL control groups (1..9)
   placingItemId: number | null;
@@ -127,6 +188,13 @@ interface GameStoreState {
   setToast: (msg: string | null) => void;
   setActiveModal: (modal: ActiveModal) => void;
   setSystemsTab: (tab: GameStoreState["systemsTab"]) => void;
+  setAdminMode: (enabled: boolean) => void;
+  setCursorTool: (tool: CursorTool) => void;
+  enqueueLevelUps: (notices: LevelUpNotice[]) => void;
+  dismissLevelUp: () => void;
+  setActiveNestModal: (target: NestModalTarget | null) => void;
+  setCollectPickerTarget: (target: CollectPickerTarget | null) => void;
+  setVisitingNeighbor: (neighbor: VisitingNeighborState | null) => void;
   setPlacingItemId: (id: number | null) => void;
   setMovingEntityUid: (uid: number | null) => void;
   setCastingMagicId: (id: number | null) => void;
@@ -206,6 +274,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   itemsById: new Map(),
   magics: [],
   goals: [],
+  levels: [],
+  globals: {},
   behaviorsById: new Map(),
   collections: {},
   localizationEn: {},
@@ -215,6 +285,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
 
   activeSave: null,
   playMode: "village",
+  adminMode: readInitialAdminMode(),
+  cursorTool: "normal",
   activeBiome: "terreno",
   activeMusic: "village",
   musicEnabled: true,
@@ -223,6 +295,10 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   boxSelectInVillage: false,
   activeModal: null,
   systemsTab: "goals",
+  levelUpQueue: [],
+  activeNestModal: null,
+  collectPickerTarget: null,
+  visitingNeighbor: null,
 
   placingItemId: null,
   movingEntityUid: null,
@@ -250,15 +326,64 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   setToast: (toast) => set({ toast }),
   setActiveModal: (activeModal) => set({ activeModal }),
   setSystemsTab: (systemsTab) => set({ systemsTab }),
-  setPlacingItemId: (placingItemId) => set({ placingItemId, castingMagicId: null, movingEntityUid: null }),
-  setMovingEntityUid: (movingEntityUid) => set({ movingEntityUid, placingItemId: null, castingMagicId: null }),
-  setCastingMagicId: (castingMagicId) => set({ castingMagicId, placingItemId: null, movingEntityUid: null }),
+  setAdminMode: (adminMode) => {
+    try {
+      localStorage.setItem(ADMIN_MODE_LS_KEY, adminMode ? "1" : "0");
+    } catch {
+      // ignore storage quota errors
+    }
+    set({ adminMode });
+  },
+  setCursorTool: (cursorTool) =>
+    set({
+      cursorTool,
+      boxSelectInVillage: cursorTool === "box_select",
+      placingItemId: null,
+      movingEntityUid: null,
+      castingMagicId: null
+    }),
+  enqueueLevelUps: (notices) =>
+    set((s) => ({
+      levelUpQueue: [...s.levelUpQueue, ...notices]
+    })),
+  dismissLevelUp: () =>
+    set((s) => ({
+      levelUpQueue: s.levelUpQueue.slice(1)
+    })),
+  setActiveNestModal: (activeNestModal) => set({ activeNestModal }),
+  setCollectPickerTarget: (collectPickerTarget) => set({ collectPickerTarget }),
+  setVisitingNeighbor: (visitingNeighbor) => set({ visitingNeighbor }),
+  setPlacingItemId: (placingItemId) =>
+    set({
+      placingItemId,
+      castingMagicId: null,
+      movingEntityUid: null,
+      cursorTool: placingItemId !== null ? "normal" : get().cursorTool
+    }),
+  setMovingEntityUid: (movingEntityUid) =>
+    set({
+      movingEntityUid,
+      placingItemId: null,
+      castingMagicId: null,
+      cursorTool: movingEntityUid !== null ? "normal" : get().cursorTool
+    }),
+  setCastingMagicId: (castingMagicId) =>
+    set({
+      castingMagicId,
+      placingItemId: null,
+      movingEntityUid: null,
+      cursorTool: castingMagicId !== null ? "normal" : get().cursorTool
+    }),
   setActiveBiome: (activeBiome) => set({ activeBiome }),
   setActiveMusic: (activeMusic) => set({ activeMusic }),
   setMusicEnabled: (musicEnabled) => set({ musicEnabled }),
   setSfxEnabled: (sfxEnabled) => set({ sfxEnabled }),
   setShowGrid: (showGrid) => set({ showGrid }),
-  setBoxSelectInVillage: (boxSelectInVillage) => set({ boxSelectInVillage }),
+  setBoxSelectInVillage: (boxSelectInVillage) =>
+    set({
+      boxSelectInVillage,
+      cursorTool: boxSelectInVillage ? "box_select" : "normal"
+    }),
   setControlGroups: (controlGroups) => set({ controlGroups }),
   setHoveredTile: (hoveredTile) => set({ hoveredTile }),
   setMetrics: (metrics) => set({ metrics }),
@@ -296,6 +421,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         itemsById,
         magics: bundle.magics,
         goals: bundle.goals,
+        levels: bundle.levels,
+        globals: bundle.globals,
         behaviorsById,
         availableMaps: bundle.maps,
         collections: bundle.collections,

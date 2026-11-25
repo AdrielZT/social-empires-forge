@@ -4,6 +4,7 @@ import {
   type CommandPayload,
   type GameItem,
   type GoalDef,
+  type LevelDef,
   type MagicSpellDef,
   type SaveFile
 } from "@sef/shared-types";
@@ -43,6 +44,8 @@ export interface CatalogBundle {
   items: GameItem[];
   magics: MagicSpellDef[];
   goals: GoalDef[];
+  levels: LevelDef[];
+  globals: Record<string, unknown>;
   behaviors: Record<string, UnitBehaviorProfile>;
   maps: ApiMapListEntry[];
   collections: Record<string, unknown>;
@@ -80,7 +83,7 @@ const LS_FALLBACK_KEY = "sef_empires_v1";
 
 // Cached static tables for in-browser deterministic command execution
 let cachedItemsById: Map<number, GameItem> = new Map();
-let cachedLevels: { level?: number | string; exp_required?: number | string }[] = [];
+let cachedLevels: LevelDef[] = [];
 let cachedExpansionPrices: { coins?: number | string; cash?: number | string; level?: number | string }[] = [];
 let cachedGlobals: Record<string, unknown> = {};
 let cachedInitialTemplate: SaveFile | null = null;
@@ -279,23 +282,38 @@ export const gameApi = {
 
   async fetchCatalogBundle(): Promise<CatalogBundle> {
     if (!IS_STATIC_MODE) {
-      const [itemsRes, magicsRes, goalsRes, behaviorsRes, mapsRes, colRes, locEnRes, locEsRes, savesRes] =
-        await Promise.all([
-          fetch("/api/game-data/items"),
-          fetch("/api/game-data/magics"),
-          fetch("/api/game-data/goals"),
-          fetch("/api/game-data/behaviors"),
-          fetch("/api/maps"),
-          fetch("/api/game-data/collections"),
-          fetch("/api/game-data/localization/en"),
-          fetch("/api/game-data/localization/es"),
-          fetch("/api/saves")
-        ]);
+      const [
+        itemsRes,
+        magicsRes,
+        goalsRes,
+        levelsRes,
+        globalsRes,
+        behaviorsRes,
+        mapsRes,
+        colRes,
+        locEnRes,
+        locEsRes,
+        savesRes
+      ] = await Promise.all([
+        fetch("/api/game-data/items"),
+        fetch("/api/game-data/magics"),
+        fetch("/api/game-data/goals"),
+        fetch("/api/game-data/levels"),
+        fetch("/api/game-data/globals"),
+        fetch("/api/game-data/behaviors"),
+        fetch("/api/maps"),
+        fetch("/api/game-data/collections"),
+        fetch("/api/game-data/localization/en"),
+        fetch("/api/game-data/localization/es"),
+        fetch("/api/saves")
+      ]);
 
       if (!itemsRes.ok) throw new Error(`HTTP ${itemsRes.status} loading items`);
       const items = (await itemsRes.json()) as GameItem[];
       const magics = magicsRes.ok ? ((await magicsRes.json()) as MagicSpellDef[]) : [];
       const goals = goalsRes.ok ? ((await goalsRes.json()) as GoalDef[]) : [];
+      const levels = levelsRes.ok ? ((await levelsRes.json()) as LevelDef[]) : [];
+      const globals = globalsRes.ok ? ((await globalsRes.json()) as Record<string, unknown>) : {};
       const behaviors = behaviorsRes.ok ? ((await behaviorsRes.json()) as Record<string, UnitBehaviorProfile>) : {};
       const mapsData = mapsRes.ok ? ((await mapsRes.json()) as { maps: ApiMapListEntry[] }) : { maps: [] };
       const collections = colRes.ok ? ((await colRes.json()) as Record<string, unknown>) : {};
@@ -307,6 +325,8 @@ export const gameApi = {
         items,
         magics,
         goals,
+        levels,
+        globals,
         behaviors,
         maps: mapsData.maps,
         collections,
@@ -339,7 +359,7 @@ export const gameApi = {
       fetchJsonOptional<Record<string, unknown>>(dataUrl("collections.json"), {}),
       fetchJsonOptional<Record<string, string>>(dataUrl("localization_en.json"), {}),
       fetchJsonOptional<Record<string, string>>(dataUrl("localization_es.json"), {}),
-      fetchJsonOptional<{ level?: number | string; exp_required?: number | string }[]>(dataUrl("levels.json"), []),
+      fetchJsonOptional<LevelDef[]>(dataUrl("levels.json"), []),
       fetchJsonOptional<{ coins?: number | string; cash?: number | string; level?: number | string }[]>(
         dataUrl("expansion_prices.json"),
         []
@@ -365,6 +385,8 @@ export const gameApi = {
       items,
       magics,
       goals,
+      levels,
+      globals,
       behaviors,
       maps: mapsPayload.maps,
       collections,
@@ -452,7 +474,8 @@ export const gameApi = {
   async executeCommands(
     pid: string,
     packetId: string,
-    commands: CommandPayload[]
+    commands: CommandPayload[],
+    adminMode = false
   ): Promise<ExecuteCommandsResult | null> {
     if (!IS_STATIC_MODE) {
       const res = await fetch("/api/commands", {
@@ -463,6 +486,7 @@ export const gameApi = {
           packetId,
           tries: 1,
           timestamp: Math.floor(Date.now() / 1000),
+          adminMode,
           commands
         })
       });
@@ -485,7 +509,8 @@ export const gameApi = {
       levels: cachedLevels,
       expansionPrices: cachedExpansionPrices,
       globals: cachedGlobals,
-      nowSec
+      nowSec,
+      adminMode
     };
 
     const allEvents: CommandSideEvent[] = [];

@@ -34,8 +34,29 @@ export type IAState = "idle" | "hold_position" | "patrol" | "force_move" | "atta
 
 export const SUBCAT_UNIT_PEASANT = 71;
 export const SUBCAT_UNIT_SIEGE = 81;
+export const SUBCAT_BUILDING_MINE = 121;
 export const SUBCAT_BUILDING_FARM = 122;
+export const SUBCAT_BUILDING_RANCH = 123;
+export const SUBCAT_BUILDING_MILL = 124;
+export const SUBCAT_RESOURCE_TREE = 125;
+export const SUBCAT_RESOURCE_STONE = 126;
+export const SUBCAT_RESOURCE_GOLD = 127;
 export const SUBCAT_BUILDING_TOWNHALL = 135;
+
+export function isEnterableWorkBuildingSubcat(subcat: number): boolean {
+  return subcat === SUBCAT_BUILDING_MINE || subcat === SUBCAT_BUILDING_FARM || subcat === SUBCAT_BUILDING_MILL;
+}
+
+export function isNaturalResourceSubcat(subcat: number): boolean {
+  return (
+    subcat === 2 ||
+    subcat === 3 ||
+    subcat === 4 ||
+    subcat === SUBCAT_RESOURCE_TREE ||
+    subcat === SUBCAT_RESOURCE_STONE ||
+    subcat === SUBCAT_RESOURCE_GOLD
+  );
+}
 
 export interface StatusEffects {
   frozenTicks: number;
@@ -120,6 +141,11 @@ export interface SimEntity {
   xpValue: number;
   collectAmount: number;
   collectType: string;
+  unitCapacity: number;
+  activationSec: number;
+  garrison: number[];
+  harvestElapsedTicks: number;
+  harvestTotalTicks: number;
 
   // Dynamic RTS & AI state (`battle/IA.as`, `battle/IAWithAgro.as`, `core/isoengine/IsoUnit.as`)
   alive: boolean;
@@ -184,10 +210,25 @@ export type SimVisualEvent =
       type: "harvest";
       workerUid: number;
       resourceUid: number;
+      itemId?: number;
+      subcatFunctional?: number;
       tx: number;
       ty: number;
       resourceType: string;
       amount: number;
+      depleted?: boolean;
+    }
+  | {
+      type: "worker_enter_building";
+      workerUid: number;
+      workerItemId: number;
+      workerTx: number;
+      workerTy: number;
+      buildingUid: number;
+      buildingItemId: number;
+      buildingTx: number;
+      buildingTy: number;
+      subcatFunctional: number;
     }
   | { type: "spell_cast"; magicId: number; tx: number; ty: number; radius: number }
   | { type: "limit_cast"; unitUid: number; tx: number; ty: number; radius: number }
@@ -351,6 +392,22 @@ export class BattleEngine {
         ? "passive"
         : "aggressive";
 
+    const isTree = def.subcatFunctional === SUBCAT_RESOURCE_TREE || def.subcatFunctional === 2;
+    const isStoneOrGold =
+      def.subcatFunctional === SUBCAT_RESOURCE_STONE ||
+      def.subcatFunctional === SUBCAT_RESOURCE_GOLD ||
+      def.subcatFunctional === 3 ||
+      def.subcatFunctional === 4;
+    const defaultNodeSec = isTree ? 3.24 : isStoneOrGold ? 6.48 : 3.24;
+    const harvestSec = def.activation > 0 && def.activation <= 30 ? def.activation : defaultNodeSec;
+    const harvestTotalTicks = Math.max(30, Math.round(harvestSec * 30));
+    const activationSec =
+      def.subcatFunctional === SUBCAT_BUILDING_FARM
+        ? def.activation > 0
+          ? def.activation
+          : 30
+        : def.activation;
+
     const ent: SimEntity = {
       uid,
       itemId: def.id,
@@ -383,6 +440,11 @@ export class BattleEngine {
       xpValue: def.xp,
       collectAmount: def.collect,
       collectType: def.collectType || "g",
+      unitCapacity: def.unitCapacity,
+      activationSec,
+      garrison: [],
+      harvestElapsedTicks: 0,
+      harvestTotalTicks,
       alive: true,
       dyingTicks: 0,
       attackCooldown: 0,
@@ -976,34 +1038,59 @@ export class BattleEngine {
     }
   }
 
+  private findNearestSameResource(originTx: number, originTy: number, subcat: number, maxRadius = 15): SimEntity | null {
+    let best: SimEntity | null = null;
+    let bestDist = maxRadius;
+    for (const e of this.entities.values()) {
+      if (!e.alive || e.type !== "b" || e.subcatFunctional !== subcat) continue;
+      const d = Math.hypot(e.tx - originTx, e.ty - originTy);
+      if (d < bestDist) {
+        bestDist = d;
+        best = e;
+      }
+    }
+    return best;
+  }
+
   private tickWorkerHarvest(worker: SimEntity, events: SimVisualEvent[]): void {
     const res = worker.harvestTargetUid !== null ? this.entities.get(worker.harvestTargetUid) : null;
     if (!res || !res.alive) {
       worker.harvestTargetUid = null;
+      worker.harvestProgress = 0;
       worker.animState = 0;
       return;
     }
 
+    const enterable = isEnterableWorkBuildingSubcat(res.subcatFunctional);
+    if (enterable) {
+      const cap = Math.max(1, res.unitCapacity || 1);
+      if (res.garrison.length >= cap) {
+        worker.harvestTargetUid = null;
+        worker.harvestProgress = 0;
+        worker.animState = 0;
+        return;
+      }
+    }
+
     const dist = this.distanceBetween(worker, res);
-    if (dist > 1.35) {
+    const arrivalDist = res.subcatFunctional === SUBCAT_BUILDING_FARM ? 1.0 : 1.35;
+    if (dist > arrivalDist) {
       if (worker.path.length === 0) {
-        const slot = findNearestFreeTile(this.grid, this.unitOccupancy, res.tx, res.ty, {
-          ignoreUid: worker.uid,
-          preferFrom: { tx: worker.tx, ty: worker.ty },
-          maxRadius: 4
+        const dest =
+          res.subcatFunctional === SUBCAT_BUILDING_FARM
+            ? { tx: Math.round(res.tx), ty: Math.round(res.ty) }
+            : findNearestFreeTile(this.grid, this.unitOccupancy, res.tx, res.ty, {
+                ignoreUid: worker.uid,
+                preferFrom: { tx: worker.tx, ty: worker.ty },
+                maxRadius: 4
+              }) ?? { tx: res.tx, ty: res.ty };
+        worker.path = findPath(this.grid, { tx: worker.tx, ty: worker.ty }, dest, {
+          flying: false,
+          ignoreEntityId: worker.uid,
+          targetEntityId: res.uid,
+          stopDistance: res.subcatFunctional === SUBCAT_BUILDING_FARM ? 0 : 1.2,
+          unitOccupancy: this.unitOccupancy
         });
-        worker.path = findPath(
-          this.grid,
-          { tx: worker.tx, ty: worker.ty },
-          slot ?? { tx: res.tx, ty: res.ty },
-          {
-            flying: false,
-            ignoreEntityId: worker.uid,
-            targetEntityId: res.uid,
-            stopDistance: slot ? 0 : 1.2,
-            unitOccupancy: this.unitOccupancy
-          }
-        );
         if (worker.path.length === 0) {
           worker.path = [{ tx: Math.round(res.tx), ty: Math.round(res.ty) }];
         }
@@ -1013,29 +1100,90 @@ export class BattleEngine {
     }
 
     worker.path = [];
+
+    // 1. Canonical Producer Buildings (Mines/Mills/Lumber Mills) & Crop Fields (Farms):
+    // Villager enters and disappears inside building garrison (`IsoUnit.as:2843-2849`, `IsoBuilding.as:407-560`).
+    if (enterable) {
+      const cap = Math.max(1, res.unitCapacity || 1);
+      if (res.garrison.length >= cap) {
+        worker.harvestTargetUid = null;
+        worker.animState = 0;
+        return;
+      }
+      res.garrison.push(worker.itemId);
+      const wTx = Math.round(worker.tx);
+      const wTy = Math.round(worker.ty);
+      worker.alive = false;
+      worker.dyingTicks = 0;
+      worker.harvestTargetUid = null;
+      worker.harvestProgress = 0;
+      this.unitOccupancy.release(worker.uid);
+      events.push({
+        type: "worker_enter_building",
+        workerUid: worker.uid,
+        workerItemId: worker.itemId,
+        workerTx: wTx,
+        workerTy: wTy,
+        buildingUid: res.uid,
+        buildingItemId: res.itemId,
+        buildingTx: Math.round(res.tx),
+        buildingTy: Math.round(res.ty),
+        subcatFunctional: res.subcatFunctional
+      });
+      return;
+    }
+
+    // 2. Canonical Natural Resources (Trees 125, Stone 126, Gold 127):
+    // Play harvest SFX ONLY on arrival & periodic chop/mine hits (never on order), deplete & disappear on completion.
     if (!worker.flying) this.unitOccupancy.claim(worker.uid, worker.tx, worker.ty);
     worker.orientation = deltaToOrientation(res.tx - worker.tx, res.ty - worker.ty, worker.orientation);
     worker.animState = 4; // ANIMATION_HARVESTING
     worker.harvestProgress += 1;
+    res.harvestElapsedTicks += 1;
 
-    if (worker.harvestProgress % 35 === 0) {
+    if (worker.harvestProgress === 1 || (worker.harvestProgress > 1 && (worker.harvestProgress - 1) % 45 === 0)) {
       const sfx =
         res.collectType === "w" ? "Lumber3Sound" : res.collectType === "f" ? "FarmSound" : "Rock6Sound";
       events.push({ type: "sfx", name: sfx });
     }
 
-    if (worker.harvestProgress >= 75) {
-      worker.harvestProgress = 0;
+    if (res.harvestElapsedTicks >= res.harvestTotalTicks) {
       const amount = Math.max(10, res.collectAmount || 20);
+      const subcat = res.subcatFunctional;
+      const rTx = res.tx;
+      const rTy = res.ty;
+
+      // Deplete & remove natural resource from map (`IsoElement.as:870-895`)
+      res.alive = false;
+      res.dyingTicks = 0;
+      this.grid.vacate(res.uid, Math.round(res.tx), Math.round(res.ty), res.width, res.height);
+
       events.push({
         type: "harvest",
         workerUid: worker.uid,
         resourceUid: res.uid,
-        tx: res.tx,
-        ty: res.ty,
+        itemId: res.itemId,
+        subcatFunctional: subcat,
+        tx: rTx,
+        ty: rTy,
         resourceType: res.collectType || "w",
-        amount
+        amount,
+        depleted: true
       });
+
+      // Canonical auto-chain (`IsoElement.as:761-781`): redirect all workers on this node to nearest remaining node
+      const nextNode = this.findNearestSameResource(rTx, rTy, subcat, 15);
+      for (const other of this.entities.values()) {
+        if (!other.alive || other.harvestTargetUid !== res.uid) continue;
+        other.harvestProgress = 0;
+        if (nextNode) {
+          other.harvestTargetUid = nextNode.uid;
+          other.path = [];
+        } else {
+          other.harvestTargetUid = null;
+          other.animState = 0;
+        }
+      }
     }
   }
 

@@ -61,6 +61,15 @@ export const GameItemSchema = z.object({
 });
 export type GameItem = z.infer<typeof GameItemSchema>;
 
+export const LevelDefSchema = z.object({
+  level: z.union([z.number(), z.string()]).optional(),
+  name: z.string().default(""),
+  exp_required: z.union([z.number(), z.string()]).transform((v) => Number(v) || 0),
+  reward_type: CostTypeSchema.default("c"),
+  reward_amount: z.union([z.number(), z.string()]).transform((v) => Number(v) || 0)
+});
+export type LevelDef = z.infer<typeof LevelDefSchema>;
+
 export const MagicSpellDefSchema = z.object({
   id: z.number().int(),
   name: z.string(),

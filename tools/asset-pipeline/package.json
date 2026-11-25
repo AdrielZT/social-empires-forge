@@ -8,6 +8,7 @@
     "extract-audio": "python3 src/extract_audio.py",
     "extract-sprites": "python3 src/extract_sprites.py",
     "decompile-as3": "tsx src/decompile-as3.ts",
+    "patch-animated-buildings": "tsx src/patch-animated-buildings.ts",
     "extract-behaviors": "tsx src/extract-unit-behaviors.ts",
     "verify": "tsx src/verify-manifest.ts",
     "build": "tsc --noEmit",

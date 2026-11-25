@@ -126,6 +126,7 @@ export const SpriteAtlasMetadataSchema = z.object({
   atlasWidth: z.number().int().positive(),
   atlasHeight: z.number().int().positive(),
   rootFrames: z.number().int().positive(),
+  animMode: z.enum(["static", "loop", "farm", "tree", "ranch"]).optional(),
   frames: z.record(z.string(), SpriteFrameRectSchema),
   animations: z.record(z.string(), SpriteAnimationSchema)
 });

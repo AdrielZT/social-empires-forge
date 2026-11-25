@@ -46,6 +46,7 @@ export interface UiStrings {
     readonly survival: string;
     readonly pvp: string;
     readonly sandbox: string;
+    readonly visit: string;
   };
 }
 
@@ -111,7 +112,8 @@ export const UI_TRANSLATIONS: Record<Locale, UiStrings> = {
       quest: "Campaña",
       survival: "Supervivencia",
       pvp: "PvP",
-      sandbox: "Explorador"
+      sandbox: "Explorador",
+      visit: "Visitando"
     }
   },
   en: {
@@ -175,7 +177,8 @@ export const UI_TRANSLATIONS: Record<Locale, UiStrings> = {
       quest: "Quest",
       survival: "Survival",
       pvp: "PvP",
-      sandbox: "Explorer"
+      sandbox: "Explorer",
+      visit: "Visiting"
     }
   }
 };

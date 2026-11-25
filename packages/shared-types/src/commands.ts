@@ -11,6 +11,7 @@ export const CommandBatchRequestSchema = z.object({
   packetId: z.string().min(1),
   tries: z.number().int().min(1).default(1),
   timestamp: z.number(),
+  adminMode: z.boolean().optional().default(false),
   commands: z.array(CommandPayloadSchema)
 });
 export type CommandBatchRequest = z.infer<typeof CommandBatchRequestSchema>;

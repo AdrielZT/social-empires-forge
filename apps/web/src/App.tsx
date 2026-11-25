@@ -9,6 +9,10 @@ import { MagicBar } from "./components/MagicBar.js";
 import { ExtendedPortrait } from "./components/ExtendedPortrait.js";
 import { WorldMapModal } from "./components/WorldMapModal.js";
 import { SystemsModal } from "./components/SystemsModal.js";
+import { LevelUpModal } from "./components/LevelUpModal.js";
+import { NestModal } from "./components/NestModal.js";
+import { PopupCollectModal } from "./components/PopupCollectModal.js";
+import { FriendsDock } from "./components/FriendsDock.js";
 import { Minimap } from "./components/Minimap.js";
 import { CornerRivets } from "./components/ClassicFrame.js";
 import { HudIcon, ResourceIcon } from "./components/GameIcons.js";
@@ -34,12 +38,15 @@ export function App() {
   const toast = useGameStore((s) => s.toast);
   const activeSave = useGameStore((s) => s.activeSave);
   const playMode = useGameStore((s) => s.playMode);
+  const adminMode = useGameStore((s) => s.adminMode);
+  const cursorTool = useGameStore((s) => s.cursorTool);
+  const visitingNeighbor = useGameStore((s) => s.visitingNeighbor);
+  const levels = useGameStore((s) => s.levels);
   const resources = useGameStore((s) => s.resources);
   const activeBiome = useGameStore((s) => s.activeBiome);
   const musicEnabled = useGameStore((s) => s.musicEnabled);
   const sfxEnabled = useGameStore((s) => s.sfxEnabled);
   const showGrid = useGameStore((s) => s.showGrid);
-  const boxSelectInVillage = useGameStore((s) => s.boxSelectInVillage);
   const controlGroups = useGameStore((s) => s.controlGroups);
   const activeModal = useGameStore((s) => s.activeModal);
   const placingItemId = useGameStore((s) => s.placingItemId);
@@ -51,11 +58,12 @@ export function App() {
   const itemsById = useGameStore((s) => s.itemsById);
 
   const setLocale = useGameStore((s) => s.setLocale);
+  const setAdminMode = useGameStore((s) => s.setAdminMode);
+  const setCursorTool = useGameStore((s) => s.setCursorTool);
   const setActiveBiome = useGameStore((s) => s.setActiveBiome);
   const setMusicEnabled = useGameStore((s) => s.setMusicEnabled);
   const setSfxEnabled = useGameStore((s) => s.setSfxEnabled);
   const setShowGrid = useGameStore((s) => s.setShowGrid);
-  const setBoxSelectInVillage = useGameStore((s) => s.setBoxSelectInVillage);
   const setActiveModal = useGameStore((s) => s.setActiveModal);
   const setSystemsTab = useGameStore((s) => s.setSystemsTab);
   const setPlacingItemId = useGameStore((s) => s.setPlacingItemId);
@@ -96,11 +104,13 @@ export function App() {
 
   useEffect(() => {
     if (playMode === "village") {
-      controllerRef.current?.renderer.setBoxSelectDefault(boxSelectInVillage);
+      controllerRef.current?.renderer.setBoxSelectDefault(cursorTool === "box_select");
+    } else if (playMode === "visit") {
+      controllerRef.current?.renderer.setBoxSelectDefault(false);
     } else {
       controllerRef.current?.renderer.setBoxSelectDefault(true);
     }
-  }, [playMode, boxSelectInVillage]);
+  }, [playMode, cursorTool]);
 
   useEffect(() => {
     controllerRef.current?.audio.setMusicEnabled(musicEnabled);
@@ -120,29 +130,48 @@ export function App() {
     .filter(([, uids]) => uids.length > 0)
     .sort((a, b) => a[0] - b[0]);
 
+  const curLvlXp = Number(levels[Math.max(0, resources.level - 1)]?.exp_required ?? 0);
+  const nextLvlXp = Number(levels[resources.level]?.exp_required ?? curLvlXp + 100);
+  const xpPct =
+    nextLvlXp > curLvlXp
+      ? Math.max(0, Math.min(100, Math.round(((resources.xp - curLvlXp) / (nextLvlXp - curLvlXp)) * 100)))
+      : 100;
+
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#2b5216]">
-      {/* Full-viewport 60+ FPS WebGL2/WebGPU Isometric Canvas (dynamic contextual SVG cursors) */}
+      {/* Full-viewport 60+ FPS WebGL2/WebGPU Isometric Canvas */}
       <div ref={canvasHostRef} className="absolute inset-0 h-full w-full" />
 
       {/* Top Classic Resource & Empire Bar */}
       <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex flex-wrap items-center justify-between gap-2 px-3 py-2">
         <div className="sp-panel pointer-events-auto relative flex items-center gap-2.5 rounded-xl px-3.5 py-1.5">
           <CornerRivets />
-          <div className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-amber-300 bg-gradient-to-b from-amber-400 to-amber-700 text-sm font-black text-white shadow">
+          <div
+            data-testid="hud-level-badge"
+            className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-amber-300 bg-gradient-to-b from-amber-400 to-amber-700 text-sm font-black text-white shadow"
+          >
             {resources.level}
           </div>
-          <div className="leading-tight">
-            <div className="text-xs font-black text-amber-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
-              {activeSave?.playerInfo.name ?? t.appTitle}
+          <div className="leading-tight min-w-[125px]">
+            <div className="flex items-center justify-between gap-2 text-xs font-black text-amber-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
+              <span className="truncate max-w-[120px]">{activeSave?.playerInfo.name ?? t.appTitle}</span>
+              <span className="text-[10px] font-bold text-amber-100/75">{t.modes[playMode]}</span>
             </div>
-            <div className="text-[11px] text-amber-100/85">
-              {t.resources.xp}: {resources.xp.toLocaleString()} · {t.modes[playMode]}
+            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-amber-100/85">
+              <span>
+                {resources.xp.toLocaleString()}/{nextLvlXp.toLocaleString()} {t.resources.xp}
+              </span>
+            </div>
+            <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded-full bg-stone-950/90 border border-amber-500/40">
+              <div
+                className="h-full bg-gradient-to-r from-sky-400 to-cyan-300 transition-all"
+                style={{ width: `${xpPct}%` }}
+              />
             </div>
           </div>
         </div>
 
-        {/* Classic Resource Counters (Crisp cross-platform SVG icons) */}
+        {/* Classic Resource Counters */}
         <div className="sp-panel pointer-events-auto relative flex flex-wrap items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-extrabold">
           <CornerRivets />
           <ResourcePill iconType="g" label={t.resources.gold} value={resources.coins} color="text-amber-300" />
@@ -158,14 +187,46 @@ export function App() {
           </span>
         </div>
 
-        {/* FPS Telemetry & Language Toggle */}
+        {/* Instant User/Admin Switch + FPS Telemetry + Language Toggle */}
         <div className="pointer-events-auto flex items-center gap-2">
+          <button
+            type="button"
+            data-testid="toggle-admin-mode"
+            onClick={() => {
+              clickSfx();
+              setAdminMode(!adminMode);
+            }}
+            title={
+              locale === "es"
+                ? adminMode
+                  ? "Modo Admin activo (todo desbloqueado). Clic para volver a Modo Usuario sin perder la partida."
+                  : "Modo Usuario activo (progresión por nivel). Clic para activar Modo Admin sin perder la partida."
+                : adminMode
+                  ? "Admin Mode active (everything unlocked). Click to return to User Mode without losing your save."
+                  : "User Mode active (level progression). Click to switch to Admin Mode without losing your save."
+            }
+            className={`rounded-lg border px-2.5 py-1 text-[11px] font-black shadow transition cursor-pointer ${
+              adminMode
+                ? "border-purple-300 bg-gradient-to-b from-purple-600 to-purple-900 text-white"
+                : "border-amber-500/60 bg-stone-950/90 text-amber-200 hover:border-amber-300"
+            }`}
+          >
+            {adminMode
+              ? locale === "es" ? "👑 Modo Admin" : "👑 Admin Mode"
+              : locale === "es" ? "👤 Modo Usuario" : "👤 User Mode"}
+          </button>
+
           <div
             data-testid="fps-badge"
-            className="rounded-lg border border-emerald-400/45 bg-stone-950/88 px-2.5 py-1 text-[11px] font-bold text-emerald-300 shadow"
+            className="hidden xl:block rounded-lg border border-emerald-400/45 bg-stone-950/88 px-2.5 py-1 text-[11px] font-bold text-emerald-300 shadow"
           >
             {metrics.fps} FPS · CPU {metrics.cpuTimeMs}ms · {metrics.visibleEntities}/{metrics.totalEntities} · {metrics.loadedAtlases} atl · {metrics.rendererType}
           </div>
+          {/* Keep fps-badge always present in DOM even on narrower viewports */}
+          <div className="xl:hidden rounded-lg border border-emerald-400/45 bg-stone-950/88 px-2 py-1 text-[10px] font-bold text-emerald-300 shadow">
+            {metrics.fps} FPS · {metrics.loadedAtlases} atl
+          </div>
+
           <div className="sp-panel flex overflow-hidden rounded-lg text-xs font-black">
             <button
               type="button"
@@ -191,8 +252,39 @@ export function App() {
         </div>
       </header>
 
+      {/* Neighbor Visit Banner (NO tutorial triggered) */}
+      {playMode === "visit" && visitingNeighbor && (
+        <div
+          data-testid="visit-banner"
+          className="sp-panel pointer-events-auto absolute left-1/2 top-16 z-25 -translate-x-1/2 flex items-center gap-3 rounded-2xl border-2 border-amber-400/80 px-4 py-2 text-xs font-black text-amber-100"
+        >
+          <span className="text-amber-300">
+            {locale === "es"
+              ? `👑 Visitando a ${visitingNeighbor.name} (Nv. ${visitingNeighbor.level})`
+              : `👑 Visiting ${visitingNeighbor.name} (Lv. ${visitingNeighbor.level})`}
+          </span>
+          <span className="rounded bg-stone-950/80 px-2 py-0.5 text-emerald-300">
+            {locale === "es"
+              ? `Ayudas: ${visitingNeighbor.assistsRemaining}/5`
+              : `Assists: ${visitingNeighbor.assistsRemaining}/5`}
+          </span>
+          <button
+            type="button"
+            data-testid="btn-return-from-visit"
+            onClick={() => {
+              clickSfx();
+              controllerRef.current?.returnFromVisit();
+            }}
+            className="sp-btn-gold flex items-center gap-1 rounded-lg px-3 py-1 cursor-pointer"
+          >
+            <HudIcon name="home" className="h-3.5 w-3.5" />
+            <span>{locale === "es" ? "Volver a mi Imperio" : "Return Home"}</span>
+          </button>
+        </div>
+      )}
+
       {/* Active Mode / Tool Banner */}
-      {(placingDef || movingEntityUid !== null || castingMagicId !== null) && (
+      {(placingDef || movingEntityUid !== null || castingMagicId !== null || (playMode === "village" && cursorTool === "bulldoze")) && (
         <div className="sp-panel pointer-events-auto absolute left-1/2 top-16 z-25 -translate-x-1/2 flex items-center gap-3 rounded-xl px-4 py-2 text-xs font-black text-amber-200">
           <span>
             {placingDef
@@ -203,9 +295,13 @@ export function App() {
                 ? locale === "es"
                   ? "Modo Mover: haz clic en la nueva posición (Esc cancela)"
                   : "Move Mode: click destination tile (Esc cancels)"
-                : locale === "es"
-                  ? "Modo Hechizo: haz clic en el objetivo para lanzar magia (Esc cancela)"
-                  : "Spell Mode: click target area to cast (Esc cancels)"}
+                : castingMagicId !== null
+                  ? locale === "es"
+                    ? "Modo Hechizo: haz clic en el objetivo para lanzar magia (Esc cancela)"
+                    : "Spell Mode: click target area to cast (Esc cancels)"
+                  : locale === "es"
+                    ? "🔨 Herramienta Eliminar / Vender: haz clic en un edificio o unidad tuya (Esc o clic der. sale)"
+                    : "🔨 Delete / Sell Tool: click your building or unit to sell (Esc or right-click exits)"}
           </span>
           <button
             type="button"
@@ -213,6 +309,7 @@ export function App() {
               setPlacingItemId(null);
               setMovingEntityUid(null);
               setCastingMagicId(null);
+              setCursorTool("normal");
               controllerRef.current?.renderer.setPlacementPreview(null);
               controllerRef.current?.renderer.setSpellPreview(null);
             }}
@@ -295,7 +392,7 @@ export function App() {
 
       {/* Toast Notification */}
       {toast && (
-        <div className="sp-panel pointer-events-none absolute left-1/2 bottom-28 z-30 -translate-x-1/2 rounded-xl px-4 py-2 text-xs font-extrabold text-amber-200">
+        <div className="sp-panel pointer-events-none absolute left-1/2 bottom-32 z-30 -translate-x-1/2 rounded-xl px-4 py-2 text-xs font-extrabold text-amber-200">
           {toast}
         </div>
       )}
@@ -316,14 +413,22 @@ export function App() {
         onTriggerLimit={() => controllerRef.current?.triggerSelectedLimit()}
         onChangeStance={(st) => controllerRef.current?.changeSelectedStance(st)}
         onStopUnits={() => controllerRef.current?.stopSelectedUnits()}
+        onOpenSpecialInterior={() => {
+          const sel = useGameStore.getState().selectedSummary;
+          if (sel) {
+            controllerRef.current?.openSpecialBuildingInterior(sel.itemId, sel.subcatFunctional, sel.tx, sel.ty);
+          }
+        }}
+        onOpenCollectPicker={() => controllerRef.current?.openCollectPickerForSelected()}
+        onPopWorker={(all) => void controllerRef.current?.popWorkerFromSelected(all)}
         onClose={() => {
           setSelection([], null);
           controllerRef.current?.renderer.setSelectedEntities([]);
         }}
       />
 
-      {/* Bottom Classic Action Bar + Control Groups + Magic Bar + Minimap */}
-      <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-end justify-between gap-2 px-3 py-2.5">
+      {/* Bottom Classic Dock: Magic + Friends & King + Classic Action Bar & Cursor Tools + Minimap */}
+      <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-end justify-between gap-2 px-3 py-2">
         {/* Left: Magic Bar */}
         <MagicBar
           onBuyMana={(useCash) =>
@@ -331,8 +436,8 @@ export function App() {
           }
         />
 
-        {/* Center: Control Group Chips (QoL 1..9) + Classic Action Buttons */}
-        <div className="flex flex-col items-center gap-1.5">
+        {/* Center: Control Groups + Classic Action Bar + Classic Friends & King Strip */}
+        <div className="flex flex-col items-center gap-1.5 min-w-0">
           {activeGroupEntries.length > 0 && (
             <div data-testid="control-groups-bar" className="pointer-events-auto flex items-center gap-1">
               {activeGroupEntries.map(([num, uids]) => (
@@ -356,159 +461,194 @@ export function App() {
             </div>
           )}
 
-          <div className="sp-panel pointer-events-auto relative flex items-center justify-center gap-1 rounded-2xl px-3 py-1.5 text-xs font-black">
-            <CornerRivets />
-            {playMode === "village" && (
+          {/* Classic Bottom Row: Friends & King coexisting cleanly with Action Dock & Explicit Cursor Tools */}
+          <div className="flex flex-wrap items-end justify-center gap-1.5">
+            <FriendsDock controller={controllerRef.current} />
+
+            <div className="sp-panel pointer-events-auto relative flex flex-wrap items-center justify-center gap-1 rounded-2xl px-2.5 py-1.5 text-xs font-black">
+              <CornerRivets />
+
+              {/* Classic Shop & World Map primary accesses */}
+              {playMode === "village" && (
+                <button
+                  type="button"
+                  data-testid="btn-shop"
+                  onClick={() => {
+                    clickSfx();
+                    setActiveModal(activeModal === "shop" ? null : "shop");
+                  }}
+                  className="sp-btn-gold flex items-center gap-1 whitespace-nowrap rounded-xl px-2.5 py-1.5 cursor-pointer"
+                >
+                  <HudIcon name="shop" className="h-4 w-4 shrink-0" />
+                  <span>{t.hud.shop}</span>
+                </button>
+              )}
+
               <button
                 type="button"
-                data-testid="btn-shop"
+                data-testid="btn-worldmap"
                 onClick={() => {
                   clickSfx();
-                  setActiveModal(activeModal === "shop" ? null : "shop");
+                  setActiveModal(activeModal === "worldMap" ? null : "worldMap");
                 }}
-                className="sp-btn-gold flex items-center gap-1 whitespace-nowrap rounded-xl px-2.5 py-1.5 cursor-pointer"
+                className="sp-btn-red flex items-center gap-1 whitespace-nowrap rounded-xl px-2.5 py-1.5 cursor-pointer"
               >
-                <HudIcon name="shop" className="h-4 w-4 shrink-0" />
-                <span>{t.hud.shop}</span>
+                <HudIcon name="map" className="h-4 w-4 shrink-0" />
+                <span>{t.hud.worldMap}</span>
               </button>
-            )}
 
-            <button
-              type="button"
-              data-testid="btn-army"
-              onClick={() => {
-                clickSfx();
-                controllerRef.current?.selectAllPlayerArmy();
-              }}
-              title={locale === "es" ? "Seleccionar todo tu ejército (F2)" : "Select your army (F2)"}
-              className="sp-btn-stone flex items-center gap-1 whitespace-nowrap rounded-xl px-2 py-1.5 text-amber-100 cursor-pointer"
-            >
-              <HudIcon name="army" className="h-4 w-4 shrink-0" />
-              <span>{locale === "es" ? "Ejército" : "Army"}</span>
-            </button>
+              {playMode !== "visit" && (
+                <button
+                  type="button"
+                  data-testid="btn-army"
+                  onClick={() => {
+                    clickSfx();
+                    controllerRef.current?.selectAllPlayerArmy();
+                  }}
+                  title={locale === "es" ? "Seleccionar todo tu ejército (F2)" : "Select your army (F2)"}
+                  className="sp-btn-stone flex items-center gap-1 whitespace-nowrap rounded-xl px-2 py-1.5 text-amber-100 cursor-pointer"
+                >
+                  <HudIcon name="army" className="h-4 w-4 shrink-0" />
+                  <span>{locale === "es" ? "Ejército" : "Army"}</span>
+                </button>
+              )}
 
-            <button
-              type="button"
-              data-testid="btn-worldmap"
-              onClick={() => {
-                clickSfx();
-                setActiveModal(activeModal === "worldMap" ? null : "worldMap");
-              }}
-              className="sp-btn-red flex items-center gap-1 whitespace-nowrap rounded-xl px-2.5 py-1.5 cursor-pointer"
-            >
-              <HudIcon name="map" className="h-4 w-4 shrink-0" />
-              <span>{t.hud.worldMap}</span>
-            </button>
-
-            <button
-              type="button"
-              data-testid="btn-systems"
-              onClick={() => {
-                clickSfx();
-                setSystemsTab("goals");
-                setActiveModal(activeModal === "systems" ? null : "systems");
-              }}
-              className="sp-btn-green flex items-center gap-1 whitespace-nowrap rounded-xl px-2.5 py-1.5 cursor-pointer"
-            >
-              <HudIcon name="goals" className="h-4 w-4 shrink-0" />
-              <span>{t.hud.goals}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                clickSfx();
-                setSystemsTab("market");
-                setActiveModal("systems");
-              }}
-              className="sp-btn-stone flex items-center gap-1 whitespace-nowrap rounded-xl px-2 py-1.5 cursor-pointer"
-            >
-              <HudIcon name="market" className="h-4 w-4 shrink-0" />
-              <span>{locale === "es" ? "Mercado" : "Market"}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                clickSfx();
-                setSystemsTab("storage");
-                setActiveModal("systems");
-              }}
-              className="sp-btn-stone flex items-center gap-1 whitespace-nowrap rounded-xl px-2 py-1.5 text-sky-200 cursor-pointer"
-            >
-              <HudIcon name="storage" className="h-4 w-4 shrink-0" />
-              <span>{t.hud.storage}</span>
-            </button>
-
-            <select
-              value={activeBiome}
-              onChange={(e) => {
-                clickSfx();
-                const biome = e.target.value as TerrainSkin;
-                setActiveBiome(biome);
-                const skinIdx = ALL_BIOMES.indexOf(biome);
-                if (playMode === "village" && skinIdx >= 0) {
-                  void controllerRef.current?.sendCommands([{ cmd: "set_skin", args: [skinIdx] }]);
-                }
-              }}
-              className="sp-inset max-w-[126px] rounded-xl px-2 py-1.5 text-amber-100"
-            >
-              {ALL_BIOMES.map((b) => (
-                <option key={b} value={b}>
-                  {t.biomes[b] ?? b}
-                </option>
-              ))}
-            </select>
-
-            {playMode === "village" && (
               <button
                 type="button"
-                data-testid="btn-drag-mode"
+                data-testid="btn-systems"
                 onClick={() => {
                   clickSfx();
-                  setBoxSelectInVillage(!boxSelectInVillage);
+                  setSystemsTab("goals");
+                  setActiveModal(activeModal === "systems" ? null : "systems");
                 }}
-                title={
-                  locale === "es"
-                    ? boxSelectInVillage
-                      ? "Arrastre izq.: Caja de selección (clic para volver a mover cámara)"
-                      : "Arrastre izq.: Mover cámara (clic para activar caja de selección)"
-                    : boxSelectInVillage
-                      ? "Left-drag: Box select (click to switch to camera pan)"
-                      : "Left-drag: Camera pan (click to switch to box select)"
-                }
-                className={`whitespace-nowrap rounded-xl px-2 py-1.5 text-[11px] font-black cursor-pointer ${
-                  boxSelectInVillage ? "sp-btn-gold" : "sp-btn-stone"
-                }`}
+                className="sp-btn-green flex items-center gap-1 whitespace-nowrap rounded-xl px-2 py-1.5 cursor-pointer"
               >
-                {boxSelectInVillage ? (locale === "es" ? "⬚ Sel." : "⬚ Box") : locale === "es" ? "✋ Cam." : "✋ Pan"}
+                <HudIcon name="goals" className="h-4 w-4 shrink-0" />
+                <span>{t.hud.goals}</span>
               </button>
-            )}
 
-            <button
-              type="button"
-              onClick={() => setMusicEnabled(!musicEnabled)}
-              title={t.hud.music}
-              className={`rounded-xl p-1.5 cursor-pointer ${musicEnabled ? "sp-btn-green" : "sp-btn-stone opacity-70"}`}
-            >
-              <HudIcon name={musicEnabled ? "soundOn" : "soundOff"} className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setSfxEnabled(!sfxEnabled)}
-              title={t.hud.sfx}
-              className={`rounded-xl p-1.5 cursor-pointer ${sfxEnabled ? "sp-btn-green" : "sp-btn-stone opacity-70"}`}
-            >
-              <HudIcon name={sfxEnabled ? "sfxOn" : "sfxOff"} className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowGrid(!showGrid)}
-              title={locale === "es" ? "Mostrar/ocultar cuadrícula (G)" : "Toggle grid (G)"}
-              className={`rounded-xl p-1.5 cursor-pointer ${showGrid ? "sp-btn-gold" : "sp-btn-stone"}`}
-            >
-              <HudIcon name="grid" className="h-4 w-4" />
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  clickSfx();
+                  setSystemsTab("market");
+                  setActiveModal("systems");
+                }}
+                className="sp-btn-stone flex items-center gap-1 whitespace-nowrap rounded-xl px-2 py-1.5 cursor-pointer"
+              >
+                <HudIcon name="market" className="h-4 w-4 shrink-0" />
+                <span className="hidden lg:inline">{locale === "es" ? "Mercado" : "Market"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  clickSfx();
+                  setSystemsTab("storage");
+                  setActiveModal("systems");
+                }}
+                className="sp-btn-stone flex items-center gap-1 whitespace-nowrap rounded-xl px-2 py-1.5 text-sky-200 cursor-pointer"
+              >
+                <HudIcon name="storage" className="h-4 w-4 shrink-0" />
+                <span className="hidden lg:inline">{t.hud.storage}</span>
+              </button>
+
+              {/* Explicit Classic Cursor Tools Group (`GuiManager.as`: Normal / Delete-Sell / Area Select) */}
+              {playMode === "village" && (
+                <div
+                  data-testid="cursor-tools-group"
+                  className="sp-inset flex items-center gap-0.5 rounded-xl p-0.5 border border-amber-500/40"
+                >
+                  <button
+                    type="button"
+                    data-testid="tool-cursor-normal"
+                    onClick={() => {
+                      clickSfx();
+                      setCursorTool("normal");
+                    }}
+                    title={locale === "es" ? "Cursor Normal (seleccionar y mover cámara)" : "Normal Cursor (select & pan)"}
+                    className={`rounded-lg px-2 py-1 text-[11px] font-black cursor-pointer ${
+                      cursorTool === "normal" ? "sp-btn-gold" : "text-amber-200/80 hover:text-amber-100"
+                    }`}
+                  >
+                    {locale === "es" ? "🖱️ Normal" : "🖱️ Normal"}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="tool-cursor-bulldoze"
+                    onClick={() => {
+                      clickSfx();
+                      setCursorTool(cursorTool === "bulldoze" ? "normal" : "bulldoze");
+                    }}
+                    title={locale === "es" ? "Eliminar / Vender edificio o unidad (B)" : "Delete / Sell building or unit (B)"}
+                    className={`rounded-lg px-2 py-1 text-[11px] font-black cursor-pointer ${
+                      cursorTool === "bulldoze" ? "sp-btn-red" : "text-rose-200/85 hover:text-rose-100"
+                    }`}
+                  >
+                    {locale === "es" ? "🔨 Vender" : "🔨 Sell"}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="tool-cursor-box"
+                    onClick={() => {
+                      clickSfx();
+                      setCursorTool(cursorTool === "box_select" ? "normal" : "box_select");
+                    }}
+                    title={locale === "es" ? "Selección en área / cantidades (M)" : "Area / multi-unit box selection (M)"}
+                    className={`rounded-lg px-2 py-1 text-[11px] font-black cursor-pointer ${
+                      cursorTool === "box_select" ? "sp-btn-gold" : "text-emerald-200/85 hover:text-emerald-100"
+                    }`}
+                  >
+                    {locale === "es" ? "⬚ Área" : "⬚ Area"}
+                  </button>
+                </div>
+              )}
+
+              <select
+                value={activeBiome}
+                onChange={(e) => {
+                  clickSfx();
+                  const biome = e.target.value as TerrainSkin;
+                  setActiveBiome(biome);
+                  const skinIdx = ALL_BIOMES.indexOf(biome);
+                  if (playMode === "village" && skinIdx >= 0) {
+                    void controllerRef.current?.sendCommands([{ cmd: "set_skin", args: [skinIdx] }]);
+                  }
+                }}
+                className="sp-inset max-w-[110px] rounded-xl px-1.5 py-1.5 text-[11px] text-amber-100"
+              >
+                {ALL_BIOMES.map((b) => (
+                  <option key={b} value={b}>
+                    {t.biomes[b] ?? b}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={() => setMusicEnabled(!musicEnabled)}
+                title={t.hud.music}
+                className={`rounded-xl p-1.5 cursor-pointer ${musicEnabled ? "sp-btn-green" : "sp-btn-stone opacity-70"}`}
+              >
+                <HudIcon name={musicEnabled ? "soundOn" : "soundOff"} className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSfxEnabled(!sfxEnabled)}
+                title={t.hud.sfx}
+                className={`rounded-xl p-1.5 cursor-pointer ${sfxEnabled ? "sp-btn-green" : "sp-btn-stone opacity-70"}`}
+              >
+                <HudIcon name={sfxEnabled ? "sfxOn" : "sfxOff"} className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowGrid(!showGrid)}
+                title={locale === "es" ? "Mostrar/ocultar cuadrícula (G)" : "Toggle grid (G)"}
+                className={`rounded-xl p-1.5 cursor-pointer ${showGrid ? "sp-btn-gold" : "sp-btn-stone"}`}
+              >
+                <HudIcon name="grid" className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -569,10 +709,22 @@ export function App() {
             clickSfx();
             setPlacingItemId(item.id);
           }}
+          onUnlockEarly={(item, cashCost) => {
+            clickSfx();
+            void controllerRef.current?.unlockBuildingEarly(item.id, cashCost);
+          }}
         />
       )}
       {activeModal === "worldMap" && <WorldMapModal controller={controllerRef.current} />}
       {activeModal === "systems" && <SystemsModal controller={controllerRef.current} />}
+      <NestModal controller={controllerRef.current} />
+      <PopupCollectModal controller={controllerRef.current} />
+      <LevelUpModal
+        onOpenShop={() => {
+          clickSfx();
+          setActiveModal("shop");
+        }}
+      />
 
       {/* Loading / Error Overlay */}
       {(loading || error) && (
