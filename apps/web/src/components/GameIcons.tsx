@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { assetsBaseUrl } from "../api/paths.js";
 
 interface IconProps {
@@ -27,11 +27,16 @@ export function ResourceIcon(props: {
   size?: number;
   className?: string;
 }) {
+  const [failed, setFailed] = useState(false);
   const spriteFile = HUD_RESOURCE_SPRITE[props.type];
   const style = props.size ? { width: props.size, height: props.size } : undefined;
-  const cls = props.className ?? (props.size ? "object-contain shrink-0 drop-shadow-[0_1px_1px_rgba(0,0,0,0.85)]" : "h-5 w-5 object-contain shrink-0 drop-shadow-[0_1px_1px_rgba(0,0,0,0.85)]");
+  const cls =
+    props.className ??
+    (props.size
+      ? "object-contain shrink-0 drop-shadow-[0_1px_1px_rgba(0,0,0,0.85)]"
+      : "h-5 w-5 object-contain shrink-0 drop-shadow-[0_1px_1px_rgba(0,0,0,0.85)]");
 
-  if (spriteFile) {
+  if (spriteFile && !failed) {
     return (
       <img
         src={`${assetsBaseUrl()}/ui/hud/${spriteFile}`}
@@ -39,6 +44,7 @@ export function ResourceIcon(props: {
         style={style}
         className={cls}
         draggable={false}
+        onError={() => setFailed(true)}
       />
     );
   }
@@ -51,11 +57,69 @@ export function ResourceIcon(props: {
       </svg>
     );
   }
+  if (props.type === "w" || props.type === "wood") {
+    return (
+      <svg viewBox="0 0 24 24" style={style} className={cls} aria-hidden="true">
+        <rect x="3" y="9" width="18" height="8" rx="4" fill="#9a5325" stroke="#451a03" strokeWidth="1.8" />
+        <ellipse cx="19" cy="13" rx="2.6" ry="3.8" fill="#e5b37c" stroke="#451a03" strokeWidth="1.4" />
+        <rect x="6" y="4.5" width="12" height="5.5" rx="2.5" fill="#b46531" stroke="#451a03" strokeWidth="1.6" />
+      </svg>
+    );
+  }
+  if (props.type === "s" || props.type === "stone") {
+    return (
+      <svg viewBox="0 0 24 24" style={style} className={cls} aria-hidden="true">
+        <path d="M4 17l3-8 6-4 7 4 1 8-6 3H7z" fill="#94a3b8" stroke="#334155" strokeWidth="1.8" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (props.type === "f" || props.type === "food") {
+    return (
+      <svg viewBox="0 0 24 24" style={style} className={cls} aria-hidden="true">
+        <path d="M16.5 4.5c2.6 2.6 2.8 6.8.2 9.4-1.8 1.8-4.5 2.4-6.9 1.6l-3.3 3.3c-.6.6-1.6.6-2.2 0-.6-.6-.6-1.6 0-2.2l3.3-3.3c-.8-2.4-.2-5.1 1.6-6.9 2.6-2.6 6.8-2.4 9.3-1.9z" fill="#e11d48" stroke="#4c0519" strokeWidth="1.7" />
+      </svg>
+    );
+  }
+  if (props.type === "c" || props.type === "cash") {
+    return (
+      <svg viewBox="0 0 24 24" style={style} className={cls} aria-hidden="true">
+        <rect x="2.5" y="6" width="19" height="12" rx="2.5" fill="#16a34a" stroke="#14532d" strokeWidth="1.8" />
+        <rect x="5" y="8.5" width="14" height="7" rx="1.2" fill="#4ade80" stroke="#15803d" strokeWidth="1" />
+      </svg>
+    );
+  }
+  if (props.type === "pop" || props.type === "p") {
+    return (
+      <svg viewBox="0 0 24 24" style={style} className={cls} aria-hidden="true">
+        <circle cx="9.5" cy="8.5" r="3.5" fill="#60a5fa" stroke="#1e3a8a" strokeWidth="1.6" />
+        <path d="M3.5 19c0-3.2 2.7-5.5 6-5.5s6 2.3 6 5.5" fill="#3b82f6" stroke="#1e3a8a" strokeWidth="1.6" />
+      </svg>
+    );
+  }
 
   return (
     <svg viewBox="0 0 24 24" style={style} className={cls} aria-hidden="true">
-      <circle cx="12" cy="12" r="8" fill="#fbbf24" stroke="#78350f" strokeWidth="2" />
+      <circle cx="12" cy="12" r="9" fill="#fbbf24" stroke="#78350f" strokeWidth="2" />
     </svg>
+  );
+}
+
+export function HudSpriteIcon(props: {
+  file: string;
+  alt?: string;
+  className?: string;
+  fallback?: ReactNode;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (failed && props.fallback) return <>{props.fallback}</>;
+  return (
+    <img
+      src={`${assetsBaseUrl()}/ui/hud/${props.file}`}
+      alt={props.alt ?? ""}
+      className={props.className ?? "h-8 w-8 object-contain drop-shadow-[0_1px_1px_rgba(0,0,0,0.5)]"}
+      draggable={false}
+      onError={() => setFailed(true)}
+    />
   );
 }
 
@@ -80,7 +144,15 @@ export function HudIcon(props: {
     | "speed"
     | "heart"
     | "home"
-    | "biome";
+    | "biome"
+    | "cursor"
+    | "boxSelect"
+    | "sell"
+    | "move"
+    | "rotate"
+    | "star"
+    | "trophy"
+    | "crown";
   className?: string;
 }) {
   const cls = props.className ?? "h-4 w-4 shrink-0";
@@ -91,6 +163,41 @@ export function HudIcon(props: {
   );
 
   switch (props.name) {
+    case "cursor":
+      return wrap(<path d="M5 3l13 9-6 1.5-2.5 6L5 3z" fill="#fffbeb" stroke="#451a03" />);
+    case "boxSelect":
+      return wrap(
+        <>
+          <rect x="4" y="4" width="16" height="16" rx="2" strokeDasharray="3 2" stroke="#1d4ed8" fill="#bfdbfe" fillOpacity="0.45" />
+          <path d="M13 13l6 3-3 1-1 3-2-7z" fill="#ffffff" stroke="#1e3a8a" />
+        </>
+      );
+    case "sell":
+      return wrap(
+        <>
+          <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.8" />
+        </>
+      );
+    case "move":
+      return wrap(<path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3" />);
+    case "rotate":
+      return wrap(
+        <>
+          <path d="M21 12a9 9 0 11-3-6.7L21 8" />
+          <path d="M21 3v5h-5" />
+        </>
+      );
+    case "star":
+      return wrap(<path d="M12 2l2.9 6.3L22 9.2l-5 4.8 1.2 7L12 17.6 5.8 21 7 14 2 9.2l7.1-.9L12 2z" fill="#fde047" stroke="#78350f" />);
+    case "trophy":
+      return wrap(
+        <>
+          <path d="M8 21h8M12 17v4M6 4h12v5a6 6 0 01-12 0V4z" fill="#facc15" stroke="#78350f" />
+          <path d="M6 6H3v2a3 3 0 003 3M18 6h3v2a3 3 0 01-3 3" stroke="#78350f" />
+        </>
+      );
+    case "crown":
+      return wrap(<path d="M3 18h18l-2-10-4.5 4L12 6l-2.5 6L5 8l-2 10z" fill="#fde047" stroke="#78350f" />);
     case "shop":
       return wrap(
         <>

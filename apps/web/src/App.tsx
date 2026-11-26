@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TerrainSkin } from "@sef/shared-types";
 import { getUiStrings } from "@sef/game-data";
 import { SFX_NAMES } from "@sef/engine-audio";
@@ -18,7 +18,7 @@ import { CollectionsModal } from "./components/CollectionsModal.js";
 import { FriendsDock } from "./components/FriendsDock.js";
 import { Minimap } from "./components/Minimap.js";
 import { CornerRivets } from "./components/ClassicFrame.js";
-import { HudIcon, ResourceIcon } from "./components/GameIcons.js";
+import { HudIcon, HudSpriteIcon, ResourceIcon } from "./components/GameIcons.js";
 import { assetsBaseUrl } from "./api/paths.js";
 
 const ALL_BIOMES: TerrainSkin[] = [
@@ -35,6 +35,8 @@ const ALL_BIOMES: TerrainSkin[] = [
 export function App() {
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const controllerRef = useRef<GameController | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [dockCollapsed, setDockCollapsed] = useState(false);
 
   const locale = useGameStore((s) => s.locale);
   const loading = useGameStore((s) => s.loading);
@@ -52,6 +54,7 @@ export function App() {
   const sfxEnabled = useGameStore((s) => s.sfxEnabled);
   const showGrid = useGameStore((s) => s.showGrid);
   const controlGroups = useGameStore((s) => s.controlGroups);
+  const selectedSummary = useGameStore((s) => s.selectedSummary);
   const activeModal = useGameStore((s) => s.activeModal);
   const specialInteriorTarget = useGameStore((s) => s.specialInteriorTarget);
   const expandModalExpId = useGameStore((s) => s.expandModalExpId);
@@ -80,6 +83,7 @@ export function App() {
   const setSelection = useGameStore((s) => s.setSelection);
 
   const t = getUiStrings(locale);
+  const es = locale === "es";
 
   useEffect(() => {
     const host = canvasHostRef.current;
@@ -150,113 +154,208 @@ export function App() {
       {/* Full-viewport 60+ FPS WebGL2/WebGPU Isometric Canvas */}
       <div ref={canvasHostRef} className="absolute inset-0 h-full w-full" />
 
-      {/* Top Classic Resource & Empire Bar */}
-      <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-        <div className="sp-panel pointer-events-auto relative flex items-center gap-2.5 rounded-xl px-3.5 py-1.5">
-          <CornerRivets />
-          <div
-            data-testid="hud-level-badge"
-            className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-amber-300 bg-gradient-to-b from-amber-400 to-amber-700 text-sm font-black text-white shadow"
-          >
-            {resources.level}
-          </div>
-          <div className="leading-tight min-w-[125px]">
-            <div className="flex items-center justify-between gap-2 text-xs font-black text-amber-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
-              <span className="truncate max-w-[120px]">{activeSave?.playerInfo.name ?? t.appTitle}</span>
-              <span className="text-[10px] font-bold text-amber-100/75">{t.modes[playMode]}</span>
+      {/* ====================================================================
+          TOP HUD BAR (1:1 with `image.png`):
+          Top-Left Avatar + Star Level Badge + Population + 5 Glossy Resource Bars
+          Top-Right Circular Golden "Menú" Button + Clean Settings Dropdown
+         ==================================================================== */}
+      <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-2 px-3 pt-2">
+        {/* Top-Left: Avatar Frame + Level Star + Population + Horizontal 5 Resource Bars */}
+        <div className="pointer-events-auto flex items-start gap-2.5">
+          {/* Avatar + Overlapping Golden Star Level Badge + Population Pill Underneath */}
+          <div className="flex flex-col items-center">
+            <div className="relative">
+              <div className="h-[52px] w-[52px] overflow-hidden rounded-lg border-2 border-[#e4a938] bg-[#4a280d] shadow-lg ring-1 ring-[#2b1506]">
+                <img
+                  src={`${assetsBaseUrl()}/ui/images_new/thumbrey.jpg`}
+                  alt={activeSave?.playerInfo.name ?? t.appTitle}
+                  className="h-full w-full object-cover"
+                  draggable={false}
+                />
+              </div>
+              {/* Overlapping Classic Golden Star Level Badge */}
+              <div
+                data-testid="hud-level-badge"
+                title={`${activeSave?.playerInfo.name ?? t.appTitle} · XP ${resources.xp.toLocaleString()}/${nextLvlXp.toLocaleString()}`}
+                className="absolute -bottom-2 -left-2 flex h-7 w-7 items-center justify-center rounded-full border-2 border-[#78350f] bg-gradient-to-b from-[#fef08a] via-[#facc15] to-[#ca8a04] text-xs font-black text-[#3a1a03] shadow-md"
+              >
+                {resources.level}
+              </div>
             </div>
-            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-amber-100/85">
+
+            {/* Compact XP Progress Bar */}
+            <div
+              title={`${resources.xp.toLocaleString()} / ${nextLvlXp.toLocaleString()} XP`}
+              className="mt-2.5 h-1.5 w-[56px] overflow-hidden rounded-full border border-[#d49b2a] bg-[#1e1005]"
+            >
+              <div className="h-full bg-gradient-to-r from-sky-400 to-cyan-300 transition-all" style={{ width: `${xpPct}%` }} />
+            </div>
+
+            {/* Population Counter Directly Below Avatar (`194/225` in `image.png`) */}
+            <div className="se-resource-bar mt-1 flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black text-white">
+              <ResourceIcon type="pop" size={14} />
               <span>
-                {resources.xp.toLocaleString()}/{nextLvlXp.toLocaleString()} {t.resources.xp}
+                {resources.population}/{resources.maxPopulation}
               </span>
             </div>
-            <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded-full bg-stone-950/90 border border-amber-500/40">
-              <div
-                className="h-full bg-gradient-to-r from-sky-400 to-cyan-300 transition-all"
-                style={{ width: `${xpPct}%` }}
-              />
-            </div>
+          </div>
+
+          {/* 5 Horizontal Glossy Resource Bars (Gold, Wood, Food, Stone, Cash) */}
+          <div className="flex flex-wrap items-center gap-2 pt-0.5">
+            <ClassicResourceBar iconType="g" value={resources.coins} title={t.resources.gold} />
+            <ClassicResourceBar iconType="w" value={resources.wood} title={t.resources.wood} />
+            <ClassicResourceBar iconType="f" value={resources.food} title={t.resources.food} />
+            <ClassicResourceBar iconType="s" value={resources.stone} title={t.resources.stone} />
+            <ClassicResourceBar iconType="c" value={resources.cash} title={t.resources.cash} widthClass="w-[82px]" />
+
+            {/* Subtle Admin Mode Indicator Pill (1-click toggle matching `Apoyar` green pill position in `image.png`) */}
+            <button
+              type="button"
+              data-testid="toggle-admin-mode"
+              onClick={() => {
+                clickSfx();
+                setAdminMode(!adminMode);
+              }}
+              title={
+                es
+                  ? adminMode
+                    ? "Modo Admin activo (todo desbloqueado). Clic para cambiar a Modo Usuario."
+                    : "Modo Usuario activo (progresión por nivel). Clic para activar Modo Admin."
+                  : adminMode
+                    ? "Admin Mode active. Click to switch to User Mode."
+                    : "User Mode active. Click to switch to Admin Mode."
+              }
+              className={`rounded-full border-2 px-3 py-0.5 text-[11px] font-black shadow-md transition cursor-pointer ${
+                adminMode
+                  ? "border-amber-200 bg-gradient-to-b from-purple-500 to-purple-800 text-white"
+                  : "border-emerald-200 bg-gradient-to-b from-emerald-500 to-emerald-700 text-white"
+              }`}
+            >
+              {adminMode ? (es ? "👑 Admin" : "👑 Admin") : es ? "👤 Usuario" : "👤 User"}
+            </button>
           </div>
         </div>
 
-        {/* Classic Resource Counters */}
-        <div className="sp-panel pointer-events-auto relative flex flex-wrap items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-extrabold">
-          <CornerRivets />
-          <ResourcePill iconType="g" label={t.resources.gold} value={resources.coins} color="text-amber-300" />
-          <ResourcePill iconType="w" label={t.resources.wood} value={resources.wood} color="text-orange-300" />
-          <ResourcePill iconType="s" label={t.resources.stone} value={resources.stone} color="text-stone-200" />
-          <ResourcePill iconType="f" label={t.resources.food} value={resources.food} color="text-rose-300" />
-          <ResourcePill iconType="c" label={t.resources.cash} value={resources.cash} color="text-emerald-300" />
-          <span className="sp-inset flex items-center gap-1 rounded-md px-2 py-0.5 text-sky-200">
-            <ResourceIcon type="pop" className="h-4 w-4" />
-            <span>
-              {resources.population}/{resources.maxPopulation}
-            </span>
-          </span>
-        </div>
-
-        {/* Instant User/Admin Switch + FPS Telemetry + Language Toggle */}
-        <div className="pointer-events-auto flex items-center gap-2">
+        {/* Top-Right: Authentic Circular Golden "Menú" Button + Clean Dropdown (`image.png`) */}
+        <div className="pointer-events-auto relative flex flex-col items-end gap-1">
           <button
             type="button"
-            data-testid="toggle-admin-mode"
+            data-testid="btn-hud-menu"
             onClick={() => {
               clickSfx();
-              setAdminMode(!adminMode);
+              setMenuOpen((v) => !v);
             }}
-            title={
-              locale === "es"
-                ? adminMode
-                  ? "Modo Admin activo (todo desbloqueado). Clic para volver a Modo Usuario sin perder la partida."
-                  : "Modo Usuario activo (progresión por nivel). Clic para activar Modo Admin sin perder la partida."
-                : adminMode
-                  ? "Admin Mode active (everything unlocked). Click to return to User Mode without losing your save."
-                  : "User Mode active (level progression). Click to switch to Admin Mode without losing your save."
-            }
-            className={`rounded-lg border px-2.5 py-1 text-[11px] font-black shadow transition cursor-pointer ${
-              adminMode
-                ? "border-purple-300 bg-gradient-to-b from-purple-600 to-purple-900 text-white"
-                : "border-amber-500/60 bg-stone-950/90 text-amber-200 hover:border-amber-300"
-            }`}
+            className="flex flex-col items-center cursor-pointer group"
           >
-            {adminMode
-              ? locale === "es" ? "👑 Modo Admin" : "👑 Admin Mode"
-              : locale === "es" ? "👤 Modo Usuario" : "👤 User Mode"}
+            <div className="se-ornate-gold-rim flex h-11 w-11 flex-col items-center justify-center gap-1 rounded-full group-hover:brightness-110 transition">
+              <span className="block h-[2.5px] w-5 rounded-full bg-white shadow" />
+              <span className="block h-[2.5px] w-5 rounded-full bg-white shadow" />
+              <span className="block h-[2.5px] w-5 rounded-full bg-white shadow" />
+            </div>
+            <span className="mt-0.5 text-[10px] font-black text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">
+              {es ? "Menú" : "Menu"}
+            </span>
           </button>
 
+          {/* Compact Telemetry Pill (subtle, matching `260 en línea` badge position in `image.png`) */}
           <div
             data-testid="fps-badge"
-            className="hidden xl:block rounded-lg border border-emerald-400/45 bg-stone-950/88 px-2.5 py-1 text-[11px] font-bold text-emerald-300 shadow"
+            className="rounded-full border border-[#d49b2a]/70 bg-black/60 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300 shadow"
           >
-            {metrics.fps} FPS · CPU {metrics.cpuTimeMs}ms · {metrics.visibleEntities}/{metrics.totalEntities} · {metrics.loadedAtlases} atl · {metrics.rendererType}
-          </div>
-          {/* Keep fps-badge always present in DOM even on narrower viewports */}
-          <div className="xl:hidden rounded-lg border border-emerald-400/45 bg-stone-950/88 px-2 py-1 text-[10px] font-bold text-emerald-300 shadow">
-            {metrics.fps} FPS · {metrics.loadedAtlases} atl
+            ● {metrics.fps} FPS · CPU {metrics.cpuTimeMs}ms · {metrics.visibleEntities}/{metrics.totalEntities} · {metrics.loadedAtlases} atl · {metrics.rendererType}
           </div>
 
-          <div className="sp-panel flex overflow-hidden rounded-lg text-xs font-black">
-            <button
-              type="button"
-              onClick={() => {
-                clickSfx();
-                setLocale("es");
-              }}
-              className={`px-2 py-1 cursor-pointer ${locale === "es" ? "bg-amber-500 text-stone-950" : "text-amber-200"}`}
-            >
-              ES
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                clickSfx();
-                setLocale("en");
-              }}
-              className={`px-2 py-1 cursor-pointer ${locale === "en" ? "bg-amber-500 text-stone-950" : "text-amber-200"}`}
-            >
-              EN
-            </button>
-          </div>
+          {/* Clean Dropdown Menu for Settings (Language, Biome, Audio, Grid) */}
+          {menuOpen && (
+            <div className="se-ornate-frame absolute right-0 top-16 z-30 w-60 rounded-2xl p-3 text-xs">
+              <CornerRivets />
+              <div className="mb-2 flex items-center justify-between border-b border-[#cfa045] pb-1.5 font-black text-[#4a2204]">
+                <span>{es ? "Ajustes del Imperio" : "Empire Settings"}</span>
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen(false)}
+                  className="sp-btn-red flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                {/* Language */}
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[#5c300a]">{es ? "Idioma" : "Language"}</span>
+                  <div className="flex overflow-hidden rounded-md border border-[#b47b19]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clickSfx();
+                        setLocale("es");
+                      }}
+                      className={`px-2 py-0.5 text-[10px] font-black cursor-pointer ${locale === "es" ? "sp-btn-gold" : "bg-white text-[#5c300a]"}`}
+                    >
+                      ES
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clickSfx();
+                        setLocale("en");
+                      }}
+                      className={`px-2 py-0.5 text-[10px] font-black cursor-pointer ${locale === "en" ? "sp-btn-gold" : "bg-white text-[#5c300a]"}`}
+                    >
+                      EN
+                    </button>
+                  </div>
+                </div>
+
+                {/* Audio + Grid */}
+                <div className="grid grid-cols-3 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setMusicEnabled(!musicEnabled)}
+                    className={`rounded-lg py-1 text-[10px] font-black cursor-pointer ${musicEnabled ? "sp-btn-green" : "se-icon-btn opacity-75"}`}
+                  >
+                    🎵 {es ? "Música" : "Music"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSfxEnabled(!sfxEnabled)}
+                    className={`rounded-lg py-1 text-[10px] font-black cursor-pointer ${sfxEnabled ? "sp-btn-green" : "se-icon-btn opacity-75"}`}
+                  >
+                    🔊 SFX
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowGrid(!showGrid)}
+                    className={`rounded-lg py-1 text-[10px] font-black cursor-pointer ${showGrid ? "sp-btn-gold" : "se-icon-btn"}`}
+                  >
+                    # {es ? "Reja" : "Grid"}
+                  </button>
+                </div>
+
+                {/* Biome Picker */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-[#5c300a]">{es ? "Bioma del Reino" : "Kingdom Biome"}</label>
+                  <select
+                    value={activeBiome}
+                    onChange={(e) => {
+                      const skin = e.target.value as TerrainSkin;
+                      setActiveBiome(skin);
+                      const idx = ALL_BIOMES.indexOf(skin);
+                      if (idx >= 0) void controllerRef.current?.sendCommands([{ cmd: "set_skin", args: [idx] }]);
+                    }}
+                    className="rounded-md border border-[#b47b19] bg-white px-2 py-1 text-[11px] font-bold text-[#3a1f07] cursor-pointer"
+                  >
+                    {ALL_BIOMES.map((b) => (
+                      <option key={b} value={b}>
+                        {t.biomes[b] ?? b}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
@@ -264,17 +363,15 @@ export function App() {
       {playMode === "visit" && visitingNeighbor && (
         <div
           data-testid="visit-banner"
-          className="sp-panel pointer-events-auto absolute left-1/2 top-16 z-25 -translate-x-1/2 flex items-center gap-3 rounded-2xl border-2 border-amber-400/80 px-4 py-2 text-xs font-black text-amber-100"
+          className="se-ornate-frame pointer-events-auto absolute left-1/2 top-16 z-25 -translate-x-1/2 flex items-center gap-3 rounded-2xl px-4 py-1.5 text-xs font-black"
         >
-          <span className="text-amber-300">
-            {locale === "es"
+          <span className="text-[#4a2204]">
+            {es
               ? `👑 Visitando a ${visitingNeighbor.name} (Nv. ${visitingNeighbor.level})`
               : `👑 Visiting ${visitingNeighbor.name} (Lv. ${visitingNeighbor.level})`}
           </span>
-          <span className="rounded bg-stone-950/80 px-2 py-0.5 text-emerald-300">
-            {locale === "es"
-              ? `Ayudas: ${visitingNeighbor.assistsRemaining}/5`
-              : `Assists: ${visitingNeighbor.assistsRemaining}/5`}
+          <span className="rounded bg-emerald-100 border border-emerald-500 px-2 py-0.5 text-emerald-800">
+            {es ? `Ayudas: ${visitingNeighbor.assistsRemaining}/5` : `Assists: ${visitingNeighbor.assistsRemaining}/5`}
           </span>
           <button
             type="button"
@@ -286,30 +383,30 @@ export function App() {
             className="sp-btn-gold flex items-center gap-1 rounded-lg px-3 py-1 cursor-pointer"
           >
             <HudIcon name="home" className="h-3.5 w-3.5" />
-            <span>{locale === "es" ? "Volver a mi Imperio" : "Return Home"}</span>
+            <span>{es ? "Volver a mi Imperio" : "Return Home"}</span>
           </button>
         </div>
       )}
 
       {/* Active Mode / Tool Banner */}
       {(placingDef || movingEntityUid !== null || castingMagicId !== null || (playMode === "village" && cursorTool === "bulldoze")) && (
-        <div className="sp-panel pointer-events-auto absolute left-1/2 top-16 z-25 -translate-x-1/2 flex items-center gap-3 rounded-xl px-4 py-2 text-xs font-black text-amber-200">
+        <div className="se-ornate-frame pointer-events-auto absolute left-1/2 top-16 z-25 -translate-x-1/2 flex items-center gap-3 rounded-xl px-4 py-1.5 text-xs font-black">
           <span>
             {placingDef
-              ? locale === "es"
-                ? `Colocando: ${placingDef.name} (clic izq. para colocar, clic der. o Esc cancela)`
+              ? es
+                ? `Colocando: ${placingDef.name} (clic izq. coloca, clic der. o Esc cancela)`
                 : `Placing: ${placingDef.name} (left-click place, right-click or Esc cancels)`
               : movingEntityUid !== null
-                ? locale === "es"
+                ? es
                   ? "Modo Mover: haz clic en la nueva posición (Esc cancela)"
                   : "Move Mode: click destination tile (Esc cancels)"
                 : castingMagicId !== null
-                  ? locale === "es"
+                  ? es
                     ? "Modo Hechizo: haz clic en el objetivo para lanzar magia (Esc cancela)"
                     : "Spell Mode: click target area to cast (Esc cancels)"
-                  : locale === "es"
-                    ? "🔨 Herramienta Eliminar / Vender: haz clic en un edificio o unidad tuya (Esc o clic der. sale)"
-                    : "🔨 Delete / Sell Tool: click your building or unit to sell (Esc or right-click exits)"}
+                  : es
+                    ? "🔨 Eliminar / Vender: haz clic en tu edificio o unidad (Esc sale)"
+                    : "🔨 Delete / Sell Tool: click your building or unit to sell (Esc exits)"}
           </span>
           <button
             type="button"
@@ -330,57 +427,53 @@ export function App() {
 
       {/* Battle / Quest / Survival / PvP Status Overlay */}
       {battleStatus && (
-        <div className="sp-panel pointer-events-auto absolute left-1/2 top-16 z-20 -translate-x-1/2 flex items-center gap-4 rounded-2xl px-4 py-2 text-xs font-black">
-          <span className="flex items-center gap-1.5 text-amber-300">
+        <div className="se-ornate-frame pointer-events-auto absolute left-1/2 top-16 z-20 -translate-x-1/2 flex items-center gap-4 rounded-2xl px-4 py-1.5 text-xs font-black">
+          <span className="flex items-center gap-1.5 text-[#4a2204]">
             <HudIcon name="sword" className="h-4 w-4" />
             {battleStatus.title}
           </span>
-          {battleStatus.mode === "survival" && <span className="text-rose-300">Wave {battleStatus.wave}</span>}
-          <span className="flex items-center gap-1 text-emerald-300">
+          {battleStatus.mode === "survival" && <span className="text-rose-700">Wave {battleStatus.wave}</span>}
+          <span className="flex items-center gap-1 text-emerald-700">
             <HudIcon name="shield" className="h-3.5 w-3.5" />
             {battleStatus.playerUnitsAlive}
           </span>
-          <span className="text-red-300">
-            {locale === "es" ? "Enemigos:" : "Enemies:"} {battleStatus.enemiesRemaining}
+          <span className="text-red-700">
+            {es ? "Enemigos:" : "Enemies:"} {battleStatus.enemiesRemaining}
           </span>
           <button
             type="button"
             onClick={() => void controllerRef.current?.returnToVillage(false)}
-            className="sp-btn-stone flex items-center gap-1 rounded-lg px-2.5 py-1 cursor-pointer"
+            className="sp-btn-gold flex items-center gap-1 rounded-lg px-2.5 py-1 cursor-pointer"
           >
             <HudIcon name="home" className="h-3.5 w-3.5" />
-            <span>{locale === "es" ? "Volver a Aldea" : "Return Home"}</span>
+            <span>{es ? "Volver a Aldea" : "Return Home"}</span>
           </button>
         </div>
       )}
 
       {/* Victory / Defeat Modal */}
       {battleStatus?.finished && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65">
-          <div className="sp-panel relative w-full max-w-md rounded-2xl p-6 text-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="se-ornate-frame relative w-full max-w-md rounded-2xl p-6 text-center">
             <CornerRivets />
-            <h2 className="text-2xl font-black text-amber-300">
+            <h2 className="text-2xl font-black text-[#4a2204]">
               {battleStatus.finished === "victory"
-                ? locale === "es"
-                  ? "¡VICTORIA!"
-                  : "VICTORY!"
-                : locale === "es"
-                  ? "DERROTA"
-                  : "DEFEAT"}
+                ? es ? "¡VICTORIA!" : "VICTORY!"
+                : es ? "DERROTA" : "DEFEAT"}
             </h2>
-            <p className="mt-2 flex items-center justify-center gap-2 text-sm text-amber-100/90">
+            <p className="mt-2 flex items-center justify-center gap-2 text-sm font-bold text-[#5c300a]">
               {battleStatus.finished === "victory" || battleStatus.lootGold > 0 ? (
                 <>
-                  <span>{locale === "es" ? "Recompensa:" : "Reward:"}</span>
-                  <span className="flex items-center gap-1 font-black text-amber-300">
+                  <span>{es ? "Recompensa:" : "Reward:"}</span>
+                  <span className="flex items-center gap-1 font-black text-amber-700">
                     +{battleStatus.lootGold}
-                    <ResourceIcon type="g" className="h-4 w-4" />
+                    <ResourceIcon type="g" size={16} />
                   </span>
-                  <span className="font-black text-sky-300">· +{battleStatus.lootXp} XP</span>
+                  <span className="font-black text-sky-700">· +{battleStatus.lootXp} XP</span>
                 </>
               ) : (
                 <span>
-                  {locale === "es"
+                  {es
                     ? "Tus tropas regresan a la aldea para reagruparse."
                     : "Your troops return home to regroup."}
                 </span>
@@ -389,10 +482,10 @@ export function App() {
             <button
               type="button"
               onClick={() => void controllerRef.current?.returnToVillage(true)}
-              className="sp-btn-gold mt-5 inline-flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-black cursor-pointer"
+              className="sp-btn-green mt-5 inline-flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-black cursor-pointer"
             >
               <HudIcon name="home" className="h-4 w-4" />
-              <span>{locale === "es" ? "Recoger y Volver al Imperio" : "Claim & Return to Empire"}</span>
+              <span>{es ? "Recoger y Volver al Imperio" : "Claim & Return to Empire"}</span>
             </button>
           </div>
         </div>
@@ -400,292 +493,288 @@ export function App() {
 
       {/* Toast Notification */}
       {toast && (
-        <div className="sp-panel pointer-events-none absolute left-1/2 bottom-32 z-30 -translate-x-1/2 rounded-xl px-4 py-2 text-xs font-extrabold text-amber-200">
+        <div className="se-ornate-frame pointer-events-none absolute left-1/2 bottom-36 z-30 -translate-x-1/2 rounded-xl px-4 py-1.5 text-xs font-black text-[#3a1f07]">
           {toast}
         </div>
       )}
 
-      {/* Contextual Extended Portrait */}
-      <ExtendedPortrait
-        onCollect={() => void controllerRef.current?.collectSelectedBuilding()}
-        onUpgrade={() => void controllerRef.current?.upgradeSelectedBuilding()}
-        onRotate={() => void controllerRef.current?.rotateSelected()}
-        onStartMove={() => {
-          const sel = useGameStore.getState().selectedSummary;
-          if (sel) setMovingEntityUid(sel.uid);
-        }}
-        onStore={() => void controllerRef.current?.storeSelected()}
-        onSell={() => void controllerRef.current?.sellSelected()}
-        onTrainUnit={(uid) => void controllerRef.current?.trainUnitFromSelected(uid)}
-        onTriggerSpecial={(idx) => controllerRef.current?.triggerSelectedSpecial(idx)}
-        onTriggerLimit={() => controllerRef.current?.triggerSelectedLimit()}
-        onChangeStance={(st) => controllerRef.current?.changeSelectedStance(st)}
-        onStopUnits={() => controllerRef.current?.stopSelectedUnits()}
-        onOpenSpecialInterior={() => {
-          const sel = useGameStore.getState().selectedSummary;
-          if (sel) {
-            controllerRef.current?.openSpecialBuildingInterior(sel.itemId, sel.subcatFunctional, sel.tx, sel.ty);
-          }
-        }}
-        onOpenCollectPicker={() => controllerRef.current?.openCollectPickerForSelected()}
-        onPopWorker={(all) => void controllerRef.current?.popWorkerFromSelected(all)}
-        onClose={() => {
-          setSelection([], null);
-          controllerRef.current?.renderer.setSelectedEntities([]);
-        }}
-      />
+      {/* ====================================================================
+          UNIFIED BOTTOM PARCHMENT BAR (1:1 with `image.png` & `image_5.png`):
+          - Floating Magic Quick-Slots & Control Groups directly above center
+          - Left: Friends & King strip (OR Integrated ExtendedPortrait when selected!)
+          - Right: Clean 2x4 Iconic Action Grid (Tools, World, Collections, Build, Army, Goals, Market, Storage)
+          - Bottom-Right: Compact Ornate Minimap + Zoom Controls
+         ==================================================================== */}
+      <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-end justify-center px-3 pb-2">
+        {/* Center Unified Bar + Floating Quick-Slots */}
+        <div className="flex flex-col items-center gap-1.5">
+          {/* Control Groups (`[1]..[9]`) + Magic Quick-Slots Floating Above Bar (`image.png`) */}
+          <div className="flex items-center gap-2">
+            {activeGroupEntries.length > 0 && (
+              <div data-testid="control-groups-bar" className="pointer-events-auto flex items-center gap-1">
+                {activeGroupEntries.map(([num, uids]) => (
+                  <button
+                    key={num}
+                    type="button"
+                    data-testid={`group-chip-${num}`}
+                    onClick={() => controllerRef.current?.recallControlGroup(num, false)}
+                    onDoubleClick={() => controllerRef.current?.recallControlGroup(num, true)}
+                    title={
+                      es
+                        ? `Grupo ${num} (${uids.length} tropas) · Doble clic centra`
+                        : `Group ${num} (${uids.length} units) · Double-click centers`
+                    }
+                    className="se-icon-btn flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-black cursor-pointer"
+                  >
+                    <span className="text-[#78350f]">[{num}]</span>
+                    <span className="text-emerald-700">×{uids.length}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
-      {/* Bottom Classic Dock: Magic + Friends & King + Classic Action Bar & Cursor Tools + Minimap */}
-      <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-end justify-between gap-2 px-3 py-2">
-        {/* Left: Magic Bar */}
-        <MagicBar
-          onBuyMana={(useCash) =>
-            void controllerRef.current?.sendCommands([{ cmd: "buy_mana", args: [useCash ? 1 : 0] }])
-          }
-        />
+            <MagicBar
+              onBuyMana={(useCash) =>
+                void controllerRef.current?.sendCommands([{ cmd: "buy_mana", args: [useCash ? 1 : 0] }])
+              }
+            />
+          </div>
 
-        {/* Center: Control Groups + Classic Action Bar + Classic Friends & King Strip */}
-        <div className="flex flex-col items-center gap-1.5 min-w-0">
-          {activeGroupEntries.length > 0 && (
-            <div data-testid="control-groups-bar" className="pointer-events-auto flex items-center gap-1">
-              {activeGroupEntries.map(([num, uids]) => (
-                <button
-                  key={num}
-                  type="button"
-                  data-testid={`group-chip-${num}`}
-                  onClick={() => controllerRef.current?.recallControlGroup(num, false)}
-                  onDoubleClick={() => controllerRef.current?.recallControlGroup(num, true)}
-                  title={
-                    locale === "es"
-                      ? `Grupo ${num} (${uids.length} tropas) · Doble clic centra cámara`
-                      : `Group ${num} (${uids.length} units) · Double-click centers camera`
-                  }
-                  className="sp-btn-stone flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-black cursor-pointer"
-                >
-                  <span className="text-amber-300">[{num}]</span>
-                  <span className="text-emerald-300">×{uids.length}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Classic Bottom Row: Friends & King coexisting cleanly with Action Dock & Explicit Cursor Tools */}
-          <div className="flex flex-wrap items-end justify-center gap-1.5">
-            <FriendsDock controller={controllerRef.current} />
-
-            <div className="sp-panel pointer-events-auto relative flex flex-wrap items-center justify-center gap-1 rounded-2xl px-2.5 py-1.5 text-xs font-black">
-              <CornerRivets />
-
-              {/* Classic Shop, World Map & Unit Collections primary accesses */}
-              {playMode === "village" && (
-                <button
-                  type="button"
-                  data-testid="btn-shop"
-                  onClick={() => {
-                    clickSfx();
-                    setActiveModal(activeModal === "shop" ? null : "shop");
-                  }}
-                  className="sp-btn-gold flex items-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-1 cursor-pointer"
-                >
-                  <img
-                    src={`${assetsBaseUrl()}/ui/hud/btn_store.webp`}
-                    alt=""
-                    className="h-5 w-auto object-contain drop-shadow-[0_1px_1px_rgba(0,0,0,0.85)]"
-                    draggable={false}
-                  />
-                  <span>{t.hud.shop}</span>
-                </button>
-              )}
-
+          {/* Unified Cream Parchment & Ornate Gold-Ruby Dock */}
+          <div className="pointer-events-auto relative">
+            {/* King Arthur Mascot + "Objetivos" Badge standing on top-left corner (`image.png` & `image_5.png`) */}
+            {!dockCollapsed && (
               <button
                 type="button"
-                data-testid="btn-worldmap"
-                onClick={() => {
-                  clickSfx();
-                  setActiveModal(activeModal === "worldMap" ? null : "worldMap");
-                }}
-                className="sp-btn-red flex items-center gap-1 whitespace-nowrap rounded-xl px-2.5 py-1.5 cursor-pointer"
-              >
-                <HudIcon name="map" className="h-4 w-4 shrink-0" />
-                <span>{t.hud.worldMap}</span>
-              </button>
-
-              {playMode === "village" && (
-                <button
-                  type="button"
-                  data-testid="btn-collections"
-                  onClick={() => {
-                    clickSfx();
-                    setActiveModal(activeModal === "collections" ? null : "collections");
-                  }}
-                  className="sp-btn-gold flex items-center gap-1 whitespace-nowrap rounded-xl px-2.5 py-1.5 cursor-pointer"
-                >
-                  <ResourceIcon type="xp" size={16} />
-                  <span>{locale === "es" ? "Colecciones" : "Collections"}</span>
-                </button>
-              )}
-
-              {playMode !== "visit" && (
-                <button
-                  type="button"
-                  data-testid="btn-army"
-                  onClick={() => {
-                    clickSfx();
-                    controllerRef.current?.selectAllPlayerArmy();
-                  }}
-                  title={locale === "es" ? "Seleccionar todo tu ejército (F2)" : "Select your army (F2)"}
-                  className="sp-btn-stone flex items-center gap-1 whitespace-nowrap rounded-xl px-2 py-1.5 text-amber-100 cursor-pointer"
-                >
-                  <HudIcon name="army" className="h-4 w-4 shrink-0" />
-                  <span>{locale === "es" ? "Ejército" : "Army"}</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                data-testid="btn-systems"
                 onClick={() => {
                   clickSfx();
                   setSystemsTab("goals");
                   setActiveModal(activeModal === "systems" ? null : "systems");
                 }}
-                className="sp-btn-green flex items-center gap-1 whitespace-nowrap rounded-xl px-2 py-1.5 cursor-pointer"
+                title={es ? "Abrir Objetivos del Reino" : "Open Kingdom Goals"}
+                className="group absolute -top-[58px] left-5 z-20 hidden md:flex flex-col items-center cursor-pointer"
               >
-                <HudIcon name="goals" className="h-4 w-4 shrink-0" />
-                <span>{t.hud.goals}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  clickSfx();
-                  setSystemsTab("market");
-                  setActiveModal("systems");
-                }}
-                className="sp-btn-stone flex items-center gap-1 whitespace-nowrap rounded-xl px-2 py-1.5 cursor-pointer"
-              >
-                <HudIcon name="market" className="h-4 w-4 shrink-0" />
-                <span className="hidden lg:inline">{locale === "es" ? "Mercado" : "Market"}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  clickSfx();
-                  setSystemsTab("storage");
-                  setActiveModal("systems");
-                }}
-                className="sp-btn-stone flex items-center gap-1 whitespace-nowrap rounded-xl px-2 py-1.5 text-sky-200 cursor-pointer"
-              >
-                <HudIcon name="storage" className="h-4 w-4 shrink-0" />
-                <span className="hidden lg:inline">{t.hud.storage}</span>
-              </button>
-
-              {/* Explicit Classic Cursor Tools Group (`GuiManager.as`: Normal / Delete-Sell / Area Select) */}
-              {playMode === "village" && (
-                <div
-                  data-testid="cursor-tools-group"
-                  className="sp-inset flex items-center gap-0.5 rounded-xl p-0.5 border border-amber-500/40"
-                >
-                  <button
-                    type="button"
-                    data-testid="tool-cursor-normal"
-                    onClick={() => {
-                      clickSfx();
-                      setCursorTool("normal");
-                    }}
-                    title={locale === "es" ? "Cursor Normal (seleccionar y mover cámara)" : "Normal Cursor (select & pan)"}
-                    className={`rounded-lg px-2 py-1 text-[11px] font-black cursor-pointer ${
-                      cursorTool === "normal" ? "sp-btn-gold" : "text-amber-200/80 hover:text-amber-100"
-                    }`}
-                  >
-                    {locale === "es" ? "🖱️ Normal" : "🖱️ Normal"}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="tool-cursor-bulldoze"
-                    onClick={() => {
-                      clickSfx();
-                      setCursorTool(cursorTool === "bulldoze" ? "normal" : "bulldoze");
-                    }}
-                    title={locale === "es" ? "Eliminar / Vender edificio o unidad (B)" : "Delete / Sell building or unit (B)"}
-                    className={`rounded-lg px-2 py-1 text-[11px] font-black cursor-pointer ${
-                      cursorTool === "bulldoze" ? "sp-btn-red" : "text-rose-200/85 hover:text-rose-100"
-                    }`}
-                  >
-                    {locale === "es" ? "🔨 Vender" : "🔨 Sell"}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="tool-cursor-box"
-                    onClick={() => {
-                      clickSfx();
-                      setCursorTool(cursorTool === "box_select" ? "normal" : "box_select");
-                    }}
-                    title={locale === "es" ? "Selección en área / cantidades (M)" : "Area / multi-unit box selection (M)"}
-                    className={`rounded-lg px-2 py-1 text-[11px] font-black cursor-pointer ${
-                      cursorTool === "box_select" ? "sp-btn-gold" : "text-emerald-200/85 hover:text-emerald-100"
-                    }`}
-                  >
-                    {locale === "es" ? "⬚ Área" : "⬚ Area"}
-                  </button>
+                <div className="h-12 w-12 overflow-hidden rounded-full border-2 border-[#facc15] bg-[#4a2204] shadow-lg group-hover:scale-105 transition-transform">
+                  <img
+                    src={`${assetsBaseUrl()}/ui/images_new/thumbrey.jpg`}
+                    alt="Rey Arturo"
+                    className="h-full w-full object-cover"
+                    draggable={false}
+                  />
                 </div>
-              )}
+                <span className="sp-btn-blue -mt-2 rounded-full px-2.5 py-0.5 text-[10px] font-black leading-none">
+                  {t.hud.goals}
+                </span>
+              </button>
+            )}
 
-              <select
-                value={activeBiome}
-                onChange={(e) => {
-                  clickSfx();
-                  const biome = e.target.value as TerrainSkin;
-                  setActiveBiome(biome);
-                  const skinIdx = ALL_BIOMES.indexOf(biome);
-                  if (playMode === "village" && skinIdx >= 0) {
-                    void controllerRef.current?.sendCommands([{ cmd: "set_skin", args: [skinIdx] }]);
-                  }
-                }}
-                className="sp-inset max-w-[110px] rounded-xl px-1.5 py-1.5 text-[11px] text-amber-100"
-              >
-                {ALL_BIOMES.map((b) => (
-                  <option key={b} value={b}>
-                    {t.biomes[b] ?? b}
-                  </option>
-                ))}
-              </select>
+            {/* Minimize / Expand Tab on Top-Left Edge */}
+            <button
+              type="button"
+              onClick={() => setDockCollapsed((c) => !c)}
+              title={dockCollapsed ? (es ? "Mostrar barra" : "Show dock") : es ? "Minimizar barra" : "Minimize dock"}
+              className="absolute -top-4 left-1.5 z-20 flex h-4 w-7 items-center justify-center rounded-t-md border-x-2 border-t-2 border-[#d49b2a] bg-[#5c300a] text-[9px] font-black text-amber-200 cursor-pointer"
+            >
+              {dockCollapsed ? "▲" : "▼"}
+            </button>
 
-              <button
-                type="button"
-                onClick={() => setMusicEnabled(!musicEnabled)}
-                title={t.hud.music}
-                className={`rounded-xl p-1.5 cursor-pointer ${musicEnabled ? "sp-btn-green" : "sp-btn-stone opacity-70"}`}
-              >
-                <HudIcon name={musicEnabled ? "soundOn" : "soundOff"} className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setSfxEnabled(!sfxEnabled)}
-                title={t.hud.sfx}
-                className={`rounded-xl p-1.5 cursor-pointer ${sfxEnabled ? "sp-btn-green" : "sp-btn-stone opacity-70"}`}
-              >
-                <HudIcon name={sfxEnabled ? "sfxOn" : "sfxOff"} className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowGrid(!showGrid)}
-                title={locale === "es" ? "Mostrar/ocultar cuadrícula (G)" : "Toggle grid (G)"}
-                className={`rounded-xl p-1.5 cursor-pointer ${showGrid ? "sp-btn-gold" : "sp-btn-stone"}`}
-              >
-                <HudIcon name="grid" className="h-4 w-4" />
-              </button>
-            </div>
+            {!dockCollapsed && (
+              <div className="se-ornate-frame relative flex items-center gap-2 rounded-xl px-2 py-1.5">
+                <CornerRivets />
+
+                {/* LEFT ZONE: Switches between Friends & King strip AND Integrated ExtendedPortrait (`image_5.png`) */}
+                <div className="flex items-center">
+                  {selectedSummary ? (
+                    <ExtendedPortrait
+                      onCollect={() => void controllerRef.current?.collectSelectedBuilding()}
+                      onUpgrade={() => void controllerRef.current?.upgradeSelectedBuilding()}
+                      onRotate={() => void controllerRef.current?.rotateSelected()}
+                      onStartMove={() => {
+                        const sel = useGameStore.getState().selectedSummary;
+                        if (sel) setMovingEntityUid(sel.uid);
+                      }}
+                      onStore={() => void controllerRef.current?.storeSelected()}
+                      onSell={() => void controllerRef.current?.sellSelected()}
+                      onTrainUnit={(uid) => void controllerRef.current?.trainUnitFromSelected(uid)}
+                      onTriggerSpecial={(idx) => controllerRef.current?.triggerSelectedSpecial(idx)}
+                      onTriggerLimit={() => controllerRef.current?.triggerSelectedLimit()}
+                      onChangeStance={(st) => controllerRef.current?.changeSelectedStance(st)}
+                      onStopUnits={() => controllerRef.current?.stopSelectedUnits()}
+                      onOpenSpecialInterior={() => {
+                        const sel = useGameStore.getState().selectedSummary;
+                        if (sel) {
+                          controllerRef.current?.openSpecialBuildingInterior(sel.itemId, sel.subcatFunctional, sel.tx, sel.ty);
+                        }
+                      }}
+                      onOpenCollectPicker={() => controllerRef.current?.openCollectPickerForSelected()}
+                      onPopWorker={(all) => void controllerRef.current?.popWorkerFromSelected(all)}
+                      onClose={() => {
+                        setSelection([], null);
+                        controllerRef.current?.renderer.setSelectedEntities([]);
+                      }}
+                    />
+                  ) : (
+                    <FriendsDock
+                      controller={controllerRef.current}
+                      onOpenGoals={() => {
+                        clickSfx();
+                        setSystemsTab("goals");
+                        setActiveModal("systems");
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* Vertical Golden Divider */}
+                <div className="h-[78px] w-[2px] shrink-0 bg-gradient-to-b from-[#d49b2a] via-[#8c5212] to-[#d49b2a] opacity-70" />
+
+                {/* RIGHT ZONE: Classic 2x4 Iconic Illustrated Buttons + Explicit Cursor Tools (`image.png` & `image_5.png`) */}
+                <div className="grid grid-cols-4 gap-x-1.5 gap-y-1 pr-1">
+                  {/* Cell 1: Cursor Tools Strip (Normal / Area / Sell) */}
+                  <div className="flex flex-col items-center justify-center">
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        data-testid="tool-cursor-normal"
+                        onClick={() => {
+                          clickSfx();
+                          setCursorTool("normal");
+                        }}
+                        title={es ? "Cursor normal (Esc)" : "Normal cursor (Esc)"}
+                        className={`flex h-7 w-7 items-center justify-center rounded border cursor-pointer ${
+                          cursorTool === "normal" ? "se-icon-btn-active" : "se-icon-btn"
+                        }`}
+                      >
+                        <HudIcon name="cursor" className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="tool-cursor-box"
+                        onClick={() => {
+                          clickSfx();
+                          setCursorTool(cursorTool === "box_select" ? "normal" : "box_select");
+                        }}
+                        title={es ? "Selección en área" : "Box area select"}
+                        className={`flex h-7 w-7 items-center justify-center rounded border cursor-pointer ${
+                          cursorTool === "box_select" ? "se-icon-btn-active" : "se-icon-btn"
+                        }`}
+                      >
+                        <HudIcon name="boxSelect" className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="tool-cursor-bulldoze"
+                        onClick={() => {
+                          clickSfx();
+                          setCursorTool(cursorTool === "bulldoze" ? "normal" : "bulldoze");
+                        }}
+                        title={es ? "Eliminar / Vender" : "Delete / Sell"}
+                        className={`flex h-7 w-7 items-center justify-center rounded border cursor-pointer ${
+                          cursorTool === "bulldoze" ? "sp-btn-red" : "se-icon-btn text-red-700"
+                        }`}
+                      >
+                        <HudIcon name="sell" className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <span className="mt-0.5 text-[9px] font-black leading-none text-[#4a2204]">
+                      {es ? "Herramientas" : "Tools"}
+                    </span>
+                  </div>
+
+                  {/* Cell 2: Mundo (World Map) */}
+                  <DockIconButton
+                    testId="btn-worldmap"
+                    label={es ? "Mundo" : "World"}
+                    onClick={() => {
+                      clickSfx();
+                      setActiveModal(activeModal === "worldMap" ? null : "worldMap");
+                    }}
+                    icon={<HudSpriteIcon file="btn_world.webp" className="h-7 w-7 object-contain" fallback={<HudIcon name="map" className="h-6 w-6" />} />}
+                  />
+
+                  {/* Cell 3: Colecciones */}
+                  <DockIconButton
+                    testId="btn-collections"
+                    label={es ? "Colecciones" : "Collections"}
+                    disabled={playMode !== "village"}
+                    onClick={() => {
+                      clickSfx();
+                      setActiveModal(activeModal === "collections" ? null : "collections");
+                    }}
+                    icon={<ResourceIcon type="xp" size={26} />}
+                  />
+
+                  {/* Cell 4: Construir (Shop — red/white market stall!) */}
+                  <DockIconButton
+                    testId="btn-shop"
+                    label={es ? "Construir" : "Build"}
+                    disabled={playMode !== "village"}
+                    onClick={() => {
+                      clickSfx();
+                      setActiveModal(activeModal === "shop" ? null : "shop");
+                    }}
+                    icon={<HudSpriteIcon file="btn_store.webp" className="h-7 w-auto object-contain" fallback={<HudIcon name="shop" className="h-6 w-6" />} />}
+                  />
+
+                  {/* Cell 5: Ejército */}
+                  <DockIconButton
+                    testId="btn-army"
+                    label={es ? "Ejército" : "Army"}
+                    disabled={playMode === "visit"}
+                    onClick={() => {
+                      clickSfx();
+                      controllerRef.current?.selectAllPlayerArmy();
+                    }}
+                    icon={<HudIcon name="army" className="h-6 w-6 text-[#5c300a]" />}
+                  />
+
+                  {/* Cell 6: Objetivos */}
+                  <DockIconButton
+                    testId="btn-systems"
+                    label={t.hud.goals}
+                    onClick={() => {
+                      clickSfx();
+                      setSystemsTab("goals");
+                      setActiveModal(activeModal === "systems" ? null : "systems");
+                    }}
+                    icon={<HudIcon name="goals" className="h-6 w-6 text-emerald-700" />}
+                  />
+
+                  {/* Cell 7: Mercado */}
+                  <DockIconButton
+                    testId="btn-market"
+                    label={es ? "Mercado" : "Market"}
+                    onClick={() => {
+                      clickSfx();
+                      setSystemsTab("market");
+                      setActiveModal("systems");
+                    }}
+                    icon={<HudIcon name="market" className="h-6 w-6 text-[#92400e] drop-shadow-[0_1px_0_rgba(255,255,255,0.6)]" />}
+                  />
+
+                  {/* Cell 8: Almacén / Regalos */}
+                  <DockIconButton
+                    testId="btn-storage"
+                    label={es ? "Almacén" : "Storage"}
+                    onClick={() => {
+                      clickSfx();
+                      setSystemsTab("storage");
+                      setActiveModal("systems");
+                    }}
+                    icon={<HudSpriteIcon file="btn_gift.webp" className="h-7 w-7 object-contain" fallback={<HudIcon name="storage" className="h-6 w-6" />} />}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Right: Minimap + Camera Zoom */}
-        <div className="pointer-events-auto flex flex-col items-end gap-1.5">
+        {/* Bottom-Right Corner: Compact Minimap + Zoom Controls */}
+        <div className="pointer-events-auto absolute bottom-2 right-2.5 hidden lg:flex flex-col items-end gap-1">
           <Minimap controller={controllerRef.current} />
-          <div className="sp-panel flex items-center gap-1 rounded-xl px-2 py-1 text-[11px] font-bold">
+          <div className="se-ornate-frame flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[10px] font-black">
             {hoveredTile && (
-              <span className="mr-1 text-amber-200/80">
+              <span className="mr-1 text-[#5c300a]">
                 ({hoveredTile.tx},{hoveredTile.ty})
               </span>
             )}
@@ -698,7 +787,7 @@ export function App() {
                   (controllerRef.current.renderer.camera.viewportH || 720) * 0.5
                 )
               }
-              className="sp-btn-stone h-6 w-6 rounded font-black cursor-pointer"
+              className="se-icon-btn h-5 w-5 rounded font-black cursor-pointer"
             >
               +
             </button>
@@ -711,20 +800,20 @@ export function App() {
                   (controllerRef.current.renderer.camera.viewportH || 720) * 0.5
                 )
               }
-              className="sp-btn-stone h-6 w-6 rounded font-black cursor-pointer"
+              className="se-icon-btn h-5 w-5 rounded font-black cursor-pointer"
             >
               −
             </button>
             <button
               type="button"
-              title={locale === "es" ? "Centrar cámara (H / Espacio)" : "Center camera (H / Space)"}
+              title={es ? "Centrar cámara (H / Espacio)" : "Center camera (H / Space)"}
               onClick={() => {
                 clickSfx();
                 controllerRef.current?.centerOnHome();
               }}
-              className="sp-btn-gold flex h-6 items-center justify-center rounded px-1.5 font-black cursor-pointer"
+              className="sp-btn-gold flex h-5 items-center justify-center rounded px-1 font-black cursor-pointer"
             >
-              <HudIcon name="center" className="h-3.5 w-3.5" />
+              <HudIcon name="center" className="h-3 w-3" />
             </button>
           </div>
         </div>
@@ -800,9 +889,9 @@ export function App() {
       {/* Loading / Error Overlay */}
       {(loading || error) && (
         <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-black/55">
-          <div className="sp-panel relative rounded-2xl px-6 py-4 text-center">
+          <div className="se-ornate-frame relative rounded-2xl px-6 py-4 text-center">
             <CornerRivets />
-            <div className="text-base font-black text-amber-300">
+            <div className="text-base font-black text-[#4a2204]">
               {error ? `Error: ${error}` : t.loading}
             </div>
           </div>
@@ -812,12 +901,54 @@ export function App() {
   );
 }
 
-function ResourcePill(props: { iconType: "g" | "w" | "s" | "f" | "c"; label: string; value: number; color: string }) {
+/**
+ * Classic Social Empires 1.4.07 glossy top resource counter bar with protruding SWF icon on the left (`image.png`).
+ */
+function ClassicResourceBar(props: {
+  iconType: "g" | "w" | "s" | "f" | "c";
+  value: number;
+  title: string;
+  widthClass?: string;
+}) {
   return (
-    <span className={`sp-inset flex items-center gap-1.5 rounded-md px-2 py-0.5 ${props.color}`}>
-      <ResourceIcon type={props.iconType} className="h-4 w-4" />
-      <span className="hidden md:inline font-semibold text-amber-100/75">{props.label}:</span>
-      <span>{Math.floor(props.value).toLocaleString()}</span>
-    </span>
+    <div
+      title={props.title}
+      className={`se-resource-bar relative flex h-[26px] ${props.widthClass ?? "w-[98px]"} items-center justify-end rounded-md pr-2 pl-6 text-xs font-black text-white`}
+    >
+      <div className="pointer-events-none absolute -left-2.5 top-1/2 -translate-y-1/2">
+        <ResourceIcon type={props.iconType} size={26} />
+      </div>
+      <span className="truncate tracking-tight drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]">
+        {Math.floor(props.value).toLocaleString()}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Classic 1.4.07 iconic illustrated button inside the right 2x4 grid of the bottom parchment dock (`image.png` & `image_5.png`).
+ */
+function DockIconButton(props: {
+  testId?: string;
+  label: string;
+  icon: React.ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={props.testId}
+      disabled={props.disabled}
+      onClick={props.onClick}
+      className="group flex flex-col items-center justify-center rounded-lg px-1 py-0.5 hover:bg-amber-300/35 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+    >
+      <div className="flex h-7 w-9 items-center justify-center group-hover:scale-110 transition-transform">
+        {props.icon}
+      </div>
+      <span className="mt-0.5 text-[9px] font-black leading-none text-[#4a2204] whitespace-nowrap">
+        {props.label}
+      </span>
+    </button>
   );
 }

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Extracts authentic Social Empires 1.4.07 HUD sprites (IconResourcesMC, StoreButtonGraphic,
-PanelCollection, AddCashButton, MenuTabFriendsMC, IconCollect, IconoCapturadoMC) from
+Extracts authentic Social Empires 1.4.07 HUD & Store sprites from
 `SocialEmpires1.4.07sec_fixed.swf` into `assets/generated/ui/hud/*.webp`.
 Idempotent: skips extraction if all expected WebP files already exist.
 """
@@ -19,8 +18,12 @@ HUD_OUT = REPO_ROOT / "assets" / "generated" / "ui" / "hud"
 
 EXPECTED_FILES = [
     "btn_store.webp",
+    "btn_world.webp",
+    "btn_gift.webp",
     "btn_collections.webp",
     "btn_add_cash.webp",
+    "bg_bottom_bar.webp",
+    "btn_expand_sign.webp",
     "friends_tab.webp",
     "icon_collect.webp",
     "icon_captured.webp",
@@ -82,7 +85,7 @@ def main() -> None:
                 "-jar",
                 str(jar),
                 "-selectid",
-                "61,112,257,314,598,1403,1467",
+                "61,79,112,118,125,228,257,314,598,1403,1434,1467",
                 "-format",
                 "sprite:png",
                 "-export",
@@ -97,11 +100,16 @@ def main() -> None:
         )
 
         mapping = {
+            "DefineSprite_79_CloseButt_CloseButt/1.png": "btn_close.webp",
             "DefineSprite_112_StoreButtonGraphic_StoreButtonGraphic/1.png": "btn_store.webp",
+            "DefineSprite_118_GiftButtonGraphic_GiftButtonGraphic/1.png": "btn_gift.webp",
+            "DefineSprite_125_AchievementButtonGraphic_AchievementButtonGraphic/1.png": "btn_world.webp",
+            "DefineSprite_228_RecuadroInfoMC_RecuadroInfoMC/1.png": "bg_bottom_bar.webp",
             "DefineSprite_257_PanelCollection_PanelCollection/1.png": "btn_collections.webp",
             "DefineSprite_314_AddCashButton_AddCashButton/1.png": "btn_add_cash.webp",
             "DefineSprite_598_MenuTabFriendsMC_MenuTabFriendsMC/1.png": "friends_tab.webp",
             "DefineSprite_1403_IconCollect_IconCollect/1.png": "icon_collect.webp",
+            "DefineSprite_1434_btnBuyExpandTileMC_btnBuyExpandTileMC/1.png": "btn_expand_sign.webp",
             "DefineSprite_1467_IconoCapturadoMC_IconoCapturadoMC/1.png": "icon_captured.webp",
         }
         written = 0
@@ -112,7 +120,7 @@ def main() -> None:
                 bb = im.getbbox()
                 if bb:
                     im = im.crop(bb)
-                im.save(HUD_OUT / dst, "WEBP", quality=90)
+                im.save(HUD_OUT / dst, "WEBP", quality=92)
                 written += 1
 
         for i in range(1, 12):
@@ -122,7 +130,7 @@ def main() -> None:
                 bb = im.getbbox()
                 if bb:
                     im = im.crop(bb)
-                im.save(HUD_OUT / f"res_{i}.webp", "WEBP", quality=90)
+                im.save(HUD_OUT / f"res_{i}.webp", "WEBP", quality=92)
                 written += 1
 
         print(f"[extract-hud-ui] Exported {written} authentic 1.4.07 HUD sprites to {HUD_OUT}.")

@@ -605,13 +605,25 @@ export class IsoRenderer {
         .stroke({ width: 2.5, color: 0xfde047, alpha: 0.45 });
       sign.addChild(border);
 
-      // Wooden post + classic riveted gold/wood placard (`btnBuyExpandTileMC`)
+      // Authentic `btnBuyExpandTileMC`: warm wooden signpost + tilted plank "EN VENTA" + white pill "Clic para comprar"
       const bg = new Graphics();
-      bg.roundRect(-7, 16, 14, 24, 3).fill({ color: 0x5c3618 }).stroke({ width: 1.5, color: 0x2b1506 });
-      bg.roundRect(-72, -24, 144, 46, 10)
-        .fill({ color: 0x3b210e, alpha: 0.94 })
-        .stroke({ width: 2.5, color: 0xfbbf24 });
-      bg.roundRect(-68, -20, 136, 38, 7).fill({ color: 0x522e14, alpha: 0.9 });
+      // Wooden post
+      bg.roundRect(-6, 12, 12, 24, 3).fill({ color: 0xb97a3d }).stroke({ width: 1.5, color: 0x5c3412 });
+      // Slightly tilted wooden board
+      bg.moveTo(-42, -26)
+        .lineTo(42, -29)
+        .lineTo(40, 12)
+        .lineTo(-40, 14)
+        .closePath()
+        .fill({ color: 0xd99b52 })
+        .stroke({ width: 2, color: 0x6b3c14 });
+      // Top highlight plank & nail
+      bg.moveTo(-39, -23).lineTo(39, -26).stroke({ width: 2, color: 0xf4c77f, alpha: 0.7 });
+      bg.circle(0, -20, 4).fill({ color: 0xc2b296 }).stroke({ width: 1.2, color: 0x4a2c0e });
+      // Clean white rounded pill underneath ("Clic para comprar")
+      bg.roundRect(-48, 22, 96, 19, 6)
+        .fill({ color: 0xfffef8, alpha: 0.96 })
+        .stroke({ width: 1.4, color: 0xc9b58e });
       sign.addChild(bg);
 
       const title = new Text({
@@ -620,26 +632,24 @@ export class IsoRenderer {
           fontFamily: "Nunito, Arial Rounded MT Bold, sans-serif",
           fontSize: 13,
           fontWeight: "900",
-          fill: 0xfef08a,
-          stroke: { color: 0x1a0c04, width: 3 }
+          fill: 0x5c3412
         }
       });
       title.anchor.set(0.5, 0.5);
-      title.y = -9;
+      title.y = -4;
       sign.addChild(title);
 
       const sub = new Text({
-        text: `Clic para expandir (#${slot.expId})`,
+        text: "Clic para comprar",
         style: {
           fontFamily: "Nunito, sans-serif",
-          fontSize: 10,
-          fontWeight: "700",
-          fill: 0x86efac,
-          stroke: { color: 0x1a0c04, width: 2 }
+          fontSize: 9.5,
+          fontWeight: "800",
+          fill: 0x1c1208
         }
       });
       sub.anchor.set(0.5, 0.5);
-      sub.y = 9;
+      sub.y = 31.5;
       sign.addChild(sub);
 
       const expId = slot.expId;
@@ -929,62 +939,47 @@ export class IsoRenderer {
       g.clear();
       const yOff = -yTop - 22;
       if (badge === "collect") {
-        // Canonical `IconCollect.as` floating resource bubble with pointer arrow & resource glyph
+        // Canonical `IconCollect.as` crisp white floating speech bubble (`image.png` top-right farms)
         const ct = (d.collectType || "g").toLowerCase();
-        const ringFill =
-          ct === "w"
-            ? 0x92400e
-            : ct === "s"
-              ? 0x64748b
-              : ct === "f"
-                ? 0x16a34a
-                : ct === "c"
-                  ? 0x059669
-                  : ct === "x" || ct === "xp"
-                    ? 0x0284c7
-                    : 0xd97706;
-        // Soft glow halo
-        g.circle(0, yOff, 19).fill({ color: 0xfef08a, alpha: 0.22 });
-        // Pointer triangle underneath
-        g.moveTo(-6, yOff + 12)
-          .lineTo(6, yOff + 12)
-          .lineTo(0, yOff + 20)
+        // Bottom speech-bubble pointer
+        g.moveTo(-5, yOff + 11)
+          .lineTo(5, yOff + 11)
+          .lineTo(0, yOff + 18)
           .closePath()
-          .fill({ color: 0xfde047 })
-          .stroke({ width: 1.5, color: 0x78350f });
-        // Outer golden rim + resource-colored medallion
-        g.circle(0, yOff, 15)
-          .fill({ color: ringFill })
-          .stroke({ width: 2.8, color: 0xfde047 });
-        g.circle(0, yOff, 11.5).stroke({ width: 1, color: 0xffffff, alpha: 0.45 });
+          .fill({ color: 0xffffff })
+          .stroke({ width: 1.5, color: 0x6b7280 });
+        // Crisp white rounded square bubble
+        g.roundRect(-15, yOff - 14, 30, 26, 6)
+          .fill({ color: 0xffffff, alpha: 0.97 })
+          .stroke({ width: 1.8, color: 0x9ca3af });
 
         if (ct === "w") {
           // Wood log icon
-          g.roundRect(-8, yOff - 3.5, 16, 7, 3).fill({ color: 0xd97706 }).stroke({ width: 1.4, color: 0x451a03 });
-          g.circle(5.5, yOff, 3).fill({ color: 0xfde68a }).stroke({ width: 1, color: 0x78350f });
+          g.roundRect(-8, yOff - 4, 16, 7, 3).fill({ color: 0xb45309 }).stroke({ width: 1.4, color: 0x451a03 });
+          g.circle(5.5, yOff - 0.5, 3).fill({ color: 0xfde68a }).stroke({ width: 1, color: 0x78350f });
         } else if (ct === "s") {
-          // Stone block icon
-          g.moveTo(-7, yOff + 5)
+          // Stone icon
+          g.moveTo(-7, yOff + 4)
             .lineTo(-5, yOff - 5)
             .lineTo(4, yOff - 6)
             .lineTo(8, yOff + 1)
             .lineTo(4, yOff + 6)
             .closePath()
-            .fill({ color: 0xe2e8f0 })
-            .stroke({ width: 1.5, color: 0x334155 });
+            .fill({ color: 0x94a3b8 })
+            .stroke({ width: 1.4, color: 0x334155 });
         } else if (ct === "f") {
-          // Food / Wheat sheaf icon
-          g.ellipse(-3, yOff - 2, 3.2, 6.2).fill({ color: 0xfde047 }).stroke({ width: 1.2, color: 0x854d0e });
-          g.ellipse(3, yOff - 2, 3.2, 6.2).fill({ color: 0xfacc15 }).stroke({ width: 1.2, color: 0x854d0e });
-          g.moveTo(0, yOff + 2).lineTo(0, yOff + 8).stroke({ width: 2.2, color: 0x86efac });
+          // Classic red steak/meat food icon matching `image.png`
+          g.ellipse(0, yOff - 1, 9.5, 6.2).fill({ color: 0xdc2626 }).stroke({ width: 1.5, color: 0x7f1d1d });
+          g.ellipse(-1, yOff - 1.5, 5.8, 3.2).fill({ color: 0xfca5a5, alpha: 0.75 });
+          g.circle(3, yOff - 1, 2).fill({ color: 0xffffff });
         } else if (ct === "c") {
           // Cash bill icon
-          g.roundRect(-8, yOff - 5, 16, 10, 2).fill({ color: 0x4ade80 }).stroke({ width: 1.5, color: 0x064e3b });
-          g.circle(0, yOff, 3).fill({ color: 0xfef08a });
+          g.roundRect(-9, yOff - 5, 18, 10, 2).fill({ color: 0x22c55e }).stroke({ width: 1.4, color: 0x14532d });
+          g.circle(0, yOff, 2.8).fill({ color: 0xfef08a });
         } else {
-          // Gold coin icon
-          g.circle(0, yOff, 8.5).fill({ color: 0xfacc15 }).stroke({ width: 1.8, color: 0x78350f });
-          g.circle(-2, yOff - 2, 2.8).fill({ color: 0xfef9c3, alpha: 0.9 });
+          // Gold ingot/coin icon
+          g.roundRect(-8, yOff - 4, 16, 8, 2).fill({ color: 0xfacc15 }).stroke({ width: 1.5, color: 0x92400e });
+          g.roundRect(-5, yOff - 6, 10, 4, 1.5).fill({ color: 0xfef08a }).stroke({ width: 1, color: 0xb45309 });
         }
       } else if (badge === "zzz") {
         // Canonical `PopupCollect.addIconZZ` / `NestsManager` idle-attention bubble

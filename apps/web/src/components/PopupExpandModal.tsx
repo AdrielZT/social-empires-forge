@@ -25,6 +25,7 @@ export function PopupExpandModal(props: {
 
   return (
     <ClassicModalFrame
+      theme="parchment"
       title={es ? `Expandir Territorio (#${props.expId})` : `Expand Territory (#${props.expId})`}
       subtitle={
         es
@@ -35,11 +36,11 @@ export function PopupExpandModal(props: {
       onClose={props.onClose}
     >
       <div className="p-5 flex flex-col gap-4">
-        <div className="sp-inset rounded-xl p-4 text-center">
-          <div className="text-xs uppercase tracking-wider text-amber-300/80 font-bold mb-1">
+        <div className="se-parchment-card rounded-xl p-4 text-center">
+          <div className="text-xs uppercase tracking-wider text-[#8c5212] font-black mb-1">
             {es ? "Cuadrante de Terreno" : "Terrain Quadrant"} #{props.expId}
           </div>
-          <p className="text-sm text-amber-100/90">
+          <p className="text-sm font-semibold text-[#4a2204]">
             {es
               ? `Actualmente posees ${ownedCount} / 25 territorios. Compra este terreno para reclamar sus recursos y derrotar a los enemigos.`
               : `You currently own ${ownedCount} / 25 territories. Buy this land to claim its resources and clear enemy camps.`}

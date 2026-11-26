@@ -13,7 +13,118 @@
   }
 }
 
-/* Classic Socialpoint Social Empires 1.4.07 Wood/Leather + Golden Rivet UI System */
+/* ============================================================================
+   Authentic Social Empires 1.4.07 Cream Parchment + Ornate Gold & Ruby System
+   Matches `GuiMC`, `StoreMC`, `RecuadroInfoMC`, and `Popup*` reference artwork
+   ============================================================================ */
+
+.se-ornate-frame {
+  background: linear-gradient(180deg, #fcf5dc 0%, #f5e6bd 58%, #ebd59e 100%);
+  border: 4px solid #d49b2a;
+  box-shadow:
+    inset 0 0 0 2px #fff9e6,
+    inset 0 0 0 3.5px #c4871e,
+    0 0 0 2px #522909,
+    0 8px 24px rgba(0, 0, 0, 0.55);
+  color: #3a1f07;
+}
+
+.se-ornate-gold-rim {
+  background: linear-gradient(180deg, #ffe27a 0%, #e0a326 48%, #b36e12 100%);
+  border: 2px solid #592a06;
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 252, 224, 0.8),
+    inset 0 -1.5px 0 rgba(105, 52, 6, 0.75),
+    0 3px 10px rgba(0, 0, 0, 0.45);
+}
+
+.se-ruby-gem {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  transform: rotate(45deg);
+  background: radial-gradient(circle at 30% 30%, #ff9ea8 0%, #e11d48 48%, #7f0a21 100%);
+  border: 1.5px solid #fde047;
+  box-shadow:
+    0 0 0 1px #4c1d06,
+    0 1px 3px rgba(0, 0, 0, 0.65);
+}
+
+.se-parchment-header {
+  background: linear-gradient(180deg, #f8e59d 0%, #ebd07c 100%);
+  border-bottom: 2px solid #cfa045;
+  color: #4a2507;
+}
+
+.se-parchment-card {
+  background: linear-gradient(180deg, #ffffff 0%, #fcf8ec 100%);
+  border: 1.5px solid #cfa96e;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 2px 5px rgba(84, 46, 12, 0.16);
+  color: #3a1f07;
+}
+
+.se-parchment-card:hover {
+  border-color: #d97706;
+  box-shadow:
+    0 0 0 2px rgba(250, 204, 21, 0.45),
+    0 4px 10px rgba(84, 46, 12, 0.24);
+}
+
+.se-resource-bar {
+  background: linear-gradient(180deg, #5d3917 0%, #3d220a 52%, #291505 100%);
+  border: 2px solid #e4a938;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 232, 160, 0.45),
+    inset 0 -1.5px 0 rgba(0, 0, 0, 0.65),
+    0 0 0 1.5px #2e1504,
+    0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.se-speech-tooltip {
+  background: #ffffff;
+  border: 2px solid #2c1606;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.38);
+  color: #1f1207;
+}
+
+.se-awning {
+  background: repeating-linear-gradient(
+    90deg,
+    #dc2626 0px,
+    #dc2626 12px,
+    #fff7ed 12px,
+    #fff7ed 24px
+  );
+  border: 2px solid #6b140c;
+  box-shadow:
+    inset 0 -4px 6px rgba(0, 0, 0, 0.25),
+    0 3px 6px rgba(0, 0, 0, 0.35);
+}
+
+.se-icon-btn {
+  background: linear-gradient(180deg, #fffaf0 0%, #f5e2b5 100%);
+  border: 1.5px solid #c9922c;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 2px 3px rgba(74, 38, 8, 0.28);
+  color: #422006;
+}
+
+.se-icon-btn:hover {
+  background: linear-gradient(180deg, #fffdf7 0%, #fde68a 100%);
+  border-color: #b45309;
+}
+
+.se-icon-btn-active {
+  background: linear-gradient(180deg, #fde047 0%, #f59e0b 100%);
+  border: 1.5px solid #78350f;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  color: #2c1404;
+}
+
+/* Classic Wood/Gold Panel Classes (preserved for dark-themed modals & overlays) */
 .sp-panel {
   background:
     repeating-linear-gradient(
@@ -71,17 +182,17 @@
 }
 
 .sp-btn-gold {
-  background: linear-gradient(180deg, #facc15 0%, #d97706 100%);
-  border: 1.5px solid #fef08a;
+  background: linear-gradient(180deg, #fde047 0%, #e59a16 100%);
+  border: 1.5px solid #fef9c3;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
     0 2px 0 #78350f,
-    0 4px 8px rgba(0, 0, 0, 0.35);
+    0 3px 6px rgba(0, 0, 0, 0.32);
   color: #291505;
 }
 
 .sp-btn-gold:hover {
-  background: linear-gradient(180deg, #fde047 0%, #f59e0b 100%);
+  background: linear-gradient(180deg, #fef08a 0%, #f59e0b 100%);
 }
 
 .sp-btn-gold:active {
@@ -90,31 +201,48 @@
 }
 
 .sp-btn-green {
-  background: linear-gradient(180deg, #22c55e 0%, #15803d 100%);
-  border: 1.5px solid #86efac;
+  background: linear-gradient(180deg, #34d348 0%, #15803d 100%);
+  border: 1.5px solid #bbf7d0;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
     0 2px 0 #14532d,
-    0 4px 8px rgba(0, 0, 0, 0.35);
+    0 3px 6px rgba(0, 0, 0, 0.32);
   color: #ffffff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.65);
 }
 
 .sp-btn-green:hover {
   background: linear-gradient(180deg, #4ade80 0%, #16a34a 100%);
 }
 
-.sp-btn-red {
-  background: linear-gradient(180deg, #dc2626 0%, #991b1b 100%);
-  border: 1.5px solid #fca5a5;
+.sp-btn-blue {
+  background: linear-gradient(180deg, #38bdf8 0%, #1d4ed8 100%);
+  border: 1.5px solid #bae6fd;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.32),
-    0 2px 0 #450a0a,
-    0 4px 8px rgba(0, 0, 0, 0.35);
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 2px 0 #1e3a8a,
+    0 3px 6px rgba(0, 0, 0, 0.35);
   color: #ffffff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.7);
+}
+
+.sp-btn-blue:hover {
+  background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+}
+
+.sp-btn-red {
+  background: linear-gradient(180deg, #ef4444 0%, #991b1b 100%);
+  border: 1.5px solid #fecaca;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 2px 0 #450a0a,
+    0 3px 6px rgba(0, 0, 0, 0.32);
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.65);
 }
 
 .sp-btn-red:hover {
-  background: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%);
+  background: linear-gradient(180deg, #f87171 0%, #b91c1c 100%);
 }
 
 .sp-btn-stone {

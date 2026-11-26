@@ -88,6 +88,7 @@ export function CollectionsModal(props: {
 
   return (
     <ClassicModalFrame
+      theme="parchment"
       title={es ? `Colección de Unidades (${allCollections.length})` : `Unit Collections (${allCollections.length})`}
       subtitle={
         adminMode
@@ -111,9 +112,9 @@ export function CollectionsModal(props: {
               setPage(0);
             }}
             placeholder={es ? "Buscar unidad o colección..." : "Search unit or collection..."}
-            className="w-64 rounded-lg bg-stone-950/90 border border-amber-500/40 px-3 py-1.5 text-xs text-amber-100 placeholder:text-amber-200/40"
+            className="w-64 rounded-lg bg-white border border-[#c7a265] px-3 py-1.5 text-xs font-semibold text-[#3a1f07] placeholder:text-[#9a713c]"
           />
-          <div className="flex items-center gap-2 text-xs text-amber-200">
+          <div className="flex items-center gap-2 text-xs text-[#4a2204]">
             <button
               type="button"
               disabled={safePage <= 0}
@@ -122,7 +123,7 @@ export function CollectionsModal(props: {
             >
               ◀
             </button>
-            <span className="font-bold">
+            <span className="font-black">
               {es ? "Página" : "Page"} {safePage + 1} / {totalPages}
             </span>
             <button
@@ -151,18 +152,18 @@ export function CollectionsModal(props: {
               <div
                 key={col.category_id}
                 data-testid={`collection-row-${col.category_id}`}
-                className="sp-card rounded-xl p-3 flex flex-col gap-2"
+                className="se-parchment-card rounded-xl p-3 flex flex-col gap-2"
               >
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-black text-amber-300">
+                <div className="flex items-center justify-between border-b border-[#e5cfa1] pb-1">
+                  <div className="text-sm font-black text-[#4a2204]">
                     {colTitle}{" "}
-                    <span className="text-xs font-bold text-amber-100/70">
+                    <span className="text-xs font-bold text-[#7c4b1a]">
                       ({unlockedCount}/{col.units.length})
                     </span>
                   </div>
-                  <div className="text-[11px] font-bold text-amber-200/80">
+                  <div className="text-[11px] font-bold text-[#6b3c11]">
                     {es ? "Recompensa:" : "Reward:"}{" "}
-                    <span className="text-emerald-300">{rewardDef?.name ?? `#${col.rewards}`}</span>
+                    <span className="font-black text-emerald-700">{rewardDef?.name ?? `#${col.rewards}`}</span>
                   </div>
                 </div>
 
@@ -174,16 +175,16 @@ export function CollectionsModal(props: {
                     return (
                       <div
                         key={unitId}
-                        className="sp-inset rounded-lg p-1.5 flex flex-col items-center gap-1 text-center"
+                        className="rounded-lg border border-[#dcc392] bg-[#fffdf7] p-1.5 flex flex-col items-center gap-1 text-center shadow-sm"
                       >
                         <div className={unlocked ? "" : "grayscale opacity-50 transition-opacity"}>
                           {uDef ? (
                             <ItemThumb imgName={uDef.imgName} alt={uDef.name} itemType="u" className="h-12 w-12" />
                           ) : (
-                            <div className="h-12 w-12 rounded bg-stone-800" />
+                            <div className="h-12 w-12 rounded bg-stone-200" />
                           )}
                         </div>
-                        <div className="text-[10px] font-bold text-amber-100 line-clamp-1 w-full">
+                        <div className="text-[10px] font-black text-[#3a1f07] line-clamp-1 w-full">
                           {uDef?.name ?? `#${unitId}`}
                         </div>
                         {adminMode ? (
@@ -196,7 +197,7 @@ export function CollectionsModal(props: {
                             {es ? "Reclamar" : "Claim"}
                           </button>
                         ) : unlocked ? (
-                          <span className="text-[10px] font-black text-emerald-400">
+                          <span className="text-[10px] font-black text-emerald-700">
                             ✓ {es ? "Obtenida" : "Owned"}
                           </span>
                         ) : (
@@ -205,7 +206,7 @@ export function CollectionsModal(props: {
                             onClick={() => void props.onUnlockUnit(unitId, unitCashCost, false)}
                             className="sp-btn-gold w-full rounded py-0.5 text-[10px] font-black cursor-pointer flex items-center justify-center gap-0.5"
                           >
-                            <ResourceIcon type="cash" size={10} />
+                            <ResourceIcon type="cash" size={11} />
                             {unitCashCost}
                           </button>
                         )}
@@ -214,15 +215,15 @@ export function CollectionsModal(props: {
                   })}
 
                   {/* Reward Slot */}
-                  <div className="sp-inset rounded-lg p-1.5 flex flex-col items-center gap-1 text-center border border-amber-400/70 bg-amber-950/30">
+                  <div className="rounded-lg border-2 border-[#d49b2a] bg-gradient-to-b from-[#fffbeb] to-[#fef08a]/50 p-1.5 flex flex-col items-center gap-1 text-center shadow">
                     <div className={isComplete || adminMode ? "" : "grayscale opacity-60"}>
                       {rewardDef ? (
                         <ItemThumb imgName={rewardDef.imgName} alt={rewardDef.name} itemType="u" className="h-12 w-12" />
                       ) : (
-                        <div className="h-12 w-12 rounded bg-stone-800" />
+                        <div className="h-12 w-12 rounded bg-stone-200" />
                       )}
                     </div>
-                    <div className="text-[10px] font-black text-amber-300 line-clamp-1 w-full">
+                    <div className="text-[10px] font-black text-[#4a2204] line-clamp-1 w-full">
                       {rewardDef?.name ?? `#${col.rewards}`}
                     </div>
                     <button
@@ -232,7 +233,7 @@ export function CollectionsModal(props: {
                       className={`w-full rounded py-0.5 text-[10px] font-black cursor-pointer ${
                         adminMode || (isComplete && !isClaimed)
                           ? "sp-btn-gold"
-                          : "bg-stone-800 text-stone-400 cursor-not-allowed"
+                          : "bg-stone-300 text-stone-600 cursor-not-allowed"
                       }`}
                     >
                       {isClaimed && !adminMode
